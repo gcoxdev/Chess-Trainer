@@ -73,9 +73,9 @@ export function useStockfish() {
     workerRef.current?.postMessage(command);
   };
 
-  const configure = ({ engineElo }) => {
-    send('setoption name UCI_LimitStrength value true');
-    send(`setoption name UCI_Elo value ${engineElo}`);
+  const configure = ({ skillLevel }) => {
+    send('setoption name UCI_LimitStrength value false');
+    send(`setoption name Skill Level value ${skillLevel}`);
     send('isready');
   };
 

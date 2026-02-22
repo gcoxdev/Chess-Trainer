@@ -28,6 +28,12 @@ function pointsForRank(rank, topN) {
   return Math.max(1, topN - rank + 1);
 }
 
+function approximateEloForSkillLevel(level) {
+  const minElo = 1320;
+  const maxElo = 3190;
+  return Math.round(minElo + ((maxElo - minElo) * (level / 20)));
+}
+
 function getPromotionChoiceFromBoardPiece(pieceCode) {
   if (!pieceCode || typeof pieceCode !== 'string' || pieceCode.length < 2) {
     return undefined;
@@ -125,7 +131,7 @@ function extractSquareFromDragArgs(...args) {
 
 export default function App() {
   const [game, setGame] = useState(() => new Chess());
-  const [engineElo, setEngineElo] = useState(1200);
+  const [engineSkillLevel, setEngineSkillLevel] = useState(5);
   const [topN, setTopN] = useState(3);
   const [playerColor, setPlayerColor] = useState('w');
   const [boardStyle, setBoardStyle] = useState('classic');
@@ -157,10 +163,10 @@ export default function App() {
     if (!ready) {
       return;
     }
-    configure({ engineElo });
+    configure({ skillLevel: engineSkillLevel });
     // configure is intentionally omitted to prevent reconfiguration on each render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, engineElo]);
+  }, [ready, engineSkillLevel]);
 
   useEffect(() => {
     const container = boardWrapRef.current;
@@ -385,19 +391,6 @@ export default function App() {
         {PIECE_SYMBOLS[pieceCode]}
       </span>
     );
-  };
-
-  const choosePromotionPiece = (color) => {
-    const input = window.prompt(
-      `Promote ${color === 'w' ? 'White' : 'Black'} pawn to (q, r, b, n):`,
-      'q'
-    );
-    if (input == null) {
-      return null;
-    }
-
-    const value = input.trim().toLowerCase();
-    return ['q', 'r', 'b', 'n'].includes(value) ? value : 'q';
   };
 
   useEffect(() => {
@@ -743,19 +736,16 @@ export default function App() {
     }
 
     const selectedPiece = game.get(selectedSquare);
-    let promotionChoice;
     if (
       selectedPiece?.type === 'p' &&
       ((selectedPiece.color === 'w' && square.endsWith('8')) ||
         (selectedPiece.color === 'b' && square.endsWith('1')))
     ) {
-      promotionChoice = choosePromotionPiece(selectedPiece.color);
-      if (!promotionChoice) {
-        return;
-      }
+      setStatus('Use drag/drop for pawn promotion to choose a piece.');
+      return;
     }
 
-    const moved = tryPlayerMove(selectedSquare, square, promotionChoice);
+    const moved = tryPlayerMove(selectedSquare, square);
     if (!moved) {
       setSelectedSquare('');
     }
@@ -834,15 +824,18 @@ export default function App() {
 
           <div className="controls">
             <label>
-              Engine Elo
-              <input
-                type="number"
-                min={1320}
-                max={3190}
-                value={engineElo}
+              Skill Level
+              <select
+                value={engineSkillLevel}
                 disabled={settingsLocked}
-                onChange={(e) => setEngineElo(clamp(Number(e.target.value || 1200), 1320, 3190))}
-              />
+                onChange={(e) => setEngineSkillLevel(clamp(Number(e.target.value || 5), 0, 20))}
+              >
+                {Array.from({ length: 21 }, (_, i) => (
+                  <option key={i} value={i}>
+                    {`Level ${i} (~${approximateEloForSkillLevel(i)} Elo)`}
+                  </option>
+                ))}
+              </select>
             </label>
 
             <label>
