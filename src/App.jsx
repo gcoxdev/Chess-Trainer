@@ -260,11 +260,77 @@ const BOARD_THEMES = {
     dark: '#B58863',
     board: { borderRadius: '10px', boxShadow: '0 10px 24px rgba(18, 34, 54, 0.24)' }
   },
+  crimson: {
+    label: 'Crimson',
+    light: '#F7E0E0',
+    dark: '#A94452',
+    board: { borderRadius: '10px', boxShadow: '0 10px 24px rgba(72, 23, 30, 0.24)' }
+  },
+  amber: {
+    label: 'Amber',
+    light: '#F7EBC9',
+    dark: '#C48A2C',
+    board: { borderRadius: '10px', boxShadow: '0 10px 24px rgba(88, 58, 16, 0.24)' }
+  },
+  green: {
+    label: 'Green',
+    light: '#EEEED2',
+    dark: '#769656',
+    board: { borderRadius: '10px', boxShadow: '0 10px 24px rgba(24, 44, 25, 0.24)' }
+  },
+  teal: {
+    label: 'Teal',
+    light: '#DAF1EE',
+    dark: '#2C8C82',
+    board: { borderRadius: '10px', boxShadow: '0 10px 24px rgba(18, 58, 53, 0.24)' }
+  },
+  blue: {
+    label: 'Blue',
+    light: '#DEEAF7',
+    dark: '#5E81AC',
+    board: { borderRadius: '10px', boxShadow: '0 10px 24px rgba(18, 38, 74, 0.24)' }
+  },
+  indigo: {
+    label: 'Indigo',
+    light: '#E5E8FA',
+    dark: '#4F5FA8',
+    board: { borderRadius: '10px', boxShadow: '0 10px 24px rgba(26, 32, 72, 0.25)' }
+  },
+  violet: {
+    label: 'Violet',
+    light: '#EFE6FA',
+    dark: '#7C5BA7',
+    board: { borderRadius: '10px', boxShadow: '0 10px 24px rgba(46, 29, 72, 0.24)' }
+  },
+  walnut: {
+    label: 'Walnut',
+    light: '#E8D2B0',
+    dark: '#8C5A3C',
+    board: { borderRadius: '10px', boxShadow: '0 12px 24px rgba(57, 31, 19, 0.28)' }
+  },
+  tournament: {
+    label: 'Tournament',
+    light: '#F4E6C8',
+    dark: '#9E6B3F',
+    board: { borderRadius: '10px', boxShadow: '0 12px 24px rgba(45, 28, 18, 0.28)' }
+  },
+  olive: {
+    label: 'Olive',
+    light: '#EEEED2',
+    dark: '#6B8E23',
+    board: { borderRadius: '8px', boxShadow: '0 8px 20px rgba(36, 54, 24, 0.22)' }
+  },
   slate: {
     label: 'Slate',
     light: '#D9E1EF',
     dark: '#60728D',
     board: { borderRadius: '10px', boxShadow: '0 10px 24px rgba(10, 19, 34, 0.28)' }
+  },
+  gray: {
+    label: 'Gray',
+    light: '#E7EAF0',
+    dark: '#7B8798',
+    board: { borderRadius: '10px', boxShadow: '0 10px 24px rgba(32, 38, 49, 0.22)' }
   },
   tournament3d: {
     label: 'Tournament 3D',
@@ -556,6 +622,317 @@ export default function App() {
         bR: getGlyphPiece('bR'),
         bQ: getGlyphPiece('bQ'),
         bK: getGlyphPiece('bK')
+      };
+    }
+
+    if (pieceStyle === 'sprite26774') {
+      const getSpritePiece = (pieceCode) => ({ squareWidth, isDragging }) => {
+        const size = `${Math.max(24, squareWidth * 1.04)}px`;
+        const isWhite = pieceCode[0] === 'w';
+        const src = isWhite
+          ? `/pieces/line-art/${pieceCode}.png?v=14`
+          : `/pieces/line-art/${pieceCode}.svg?v=14`;
+
+        return (
+          <div
+            style={{
+              width: '100%',
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              overflow: 'visible'
+            }}
+          >
+            <div
+              style={{
+                width: size,
+                height: size,
+                transformOrigin: 'center center',
+                transform: isDragging ? 'scale(1.05)' : 'scale(1)',
+                transition: 'transform 120ms ease-out'
+              }}
+            >
+              <img
+                src={src}
+                alt=""
+                draggable={false}
+                aria-hidden="true"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'contain',
+                  objectPosition: 'center center',
+                  display: 'block'
+                }}
+              />
+            </div>
+          </div>
+        );
+      };
+
+      return {
+        wP: getSpritePiece('wP'),
+        wN: getSpritePiece('wN'),
+        wB: getSpritePiece('wB'),
+        wR: getSpritePiece('wR'),
+        wQ: getSpritePiece('wQ'),
+        wK: getSpritePiece('wK'),
+        bP: getSpritePiece('bP'),
+        bN: getSpritePiece('bN'),
+        bB: getSpritePiece('bB'),
+        bR: getSpritePiece('bR'),
+        bQ: getSpritePiece('bQ'),
+        bK: getSpritePiece('bK')
+      };
+    }
+
+    if (pieceStyle === 'spriteChessPieces') {
+      const getSpritePiece = (pieceCode) => ({ squareWidth, isDragging }) => {
+        const size = `${Math.max(24, squareWidth * 1.02)}px`;
+        const src = `/pieces/illustrated/${pieceCode}.png?v=4`;
+
+        return (
+          <div
+            style={{
+              width: '100%',
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              overflow: 'visible'
+            }}
+          >
+            <div
+              style={{
+                width: size,
+                height: size,
+                transformOrigin: 'center center',
+                transform: isDragging ? 'scale(1.05)' : 'scale(1)',
+                transition: 'transform 120ms ease-out'
+              }}
+            >
+              <img
+                src={src}
+                alt=""
+                draggable={false}
+                aria-hidden="true"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'contain',
+                  objectPosition: 'center center',
+                  display: 'block'
+                }}
+              />
+            </div>
+          </div>
+        );
+      };
+
+      return {
+        wP: getSpritePiece('wP'),
+        wN: getSpritePiece('wN'),
+        wB: getSpritePiece('wB'),
+        wR: getSpritePiece('wR'),
+        wQ: getSpritePiece('wQ'),
+        wK: getSpritePiece('wK'),
+        bP: getSpritePiece('bP'),
+        bN: getSpritePiece('bN'),
+        bB: getSpritePiece('bB'),
+        bR: getSpritePiece('bR'),
+        bQ: getSpritePiece('bQ'),
+        bK: getSpritePiece('bK')
+      };
+    }
+
+    if (pieceStyle === 'sprite3413429') {
+      const getSpritePiece = (pieceCode) => ({ squareWidth, isDragging }) => {
+        const isPawn = pieceCode[1] === 'P';
+        const sizeFactor = isPawn ? 0.88 : 1.02;
+        const size = `${Math.max(24, squareWidth * sizeFactor)}px`;
+        const isWhite = pieceCode[0] === 'w';
+        const src = isWhite
+          ? `/pieces/regal/${pieceCode}.png?v=2`
+          : `/pieces/regal/${pieceCode}.svg?v=2`;
+
+        return (
+          <div
+            style={{
+              width: '100%',
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              overflow: 'visible'
+            }}
+          >
+            <div
+              style={{
+                width: size,
+                height: size,
+                transformOrigin: 'center center',
+                transform: isDragging ? 'scale(1.05)' : 'scale(1)',
+                transition: 'transform 120ms ease-out'
+              }}
+            >
+              <img
+                src={src}
+                alt=""
+                draggable={false}
+                aria-hidden="true"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'contain',
+                  objectPosition: 'center center',
+                  display: 'block'
+                }}
+              />
+            </div>
+          </div>
+        );
+      };
+
+      return {
+        wP: getSpritePiece('wP'),
+        wN: getSpritePiece('wN'),
+        wB: getSpritePiece('wB'),
+        wR: getSpritePiece('wR'),
+        wQ: getSpritePiece('wQ'),
+        wK: getSpritePiece('wK'),
+        bP: getSpritePiece('bP'),
+        bN: getSpritePiece('bN'),
+        bB: getSpritePiece('bB'),
+        bR: getSpritePiece('bR'),
+        bQ: getSpritePiece('bQ'),
+        bK: getSpritePiece('bK')
+      };
+    }
+
+    if (pieceStyle === 'spriteChrisdesign') {
+      const getSpritePiece = (pieceCode) => ({ squareWidth, isDragging }) => {
+        const isPawn = pieceCode[1] === 'P';
+        const sizeFactor = isPawn ? 0.9 : 1.04;
+        const size = `${Math.max(24, squareWidth * sizeFactor)}px`;
+        const src = `/pieces/modern/${pieceCode}.png?v=4`;
+
+        return (
+          <div
+            style={{
+              width: '100%',
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              overflow: 'visible'
+            }}
+          >
+            <div
+              style={{
+                width: size,
+                height: size,
+                transformOrigin: 'center center',
+                transform: isDragging ? 'scale(1.05)' : 'scale(1)',
+                transition: 'transform 120ms ease-out'
+              }}
+            >
+              <img
+                src={src}
+                alt=""
+                draggable={false}
+                aria-hidden="true"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'contain',
+                  objectPosition: 'center center',
+                  display: 'block'
+                }}
+              />
+            </div>
+          </div>
+        );
+      };
+
+      return {
+        wP: getSpritePiece('wP'),
+        wN: getSpritePiece('wN'),
+        wB: getSpritePiece('wB'),
+        wR: getSpritePiece('wR'),
+        wQ: getSpritePiece('wQ'),
+        wK: getSpritePiece('wK'),
+        bP: getSpritePiece('bP'),
+        bN: getSpritePiece('bN'),
+        bB: getSpritePiece('bB'),
+        bR: getSpritePiece('bR'),
+        bQ: getSpritePiece('bQ'),
+        bK: getSpritePiece('bK')
+      };
+    }
+
+    if (pieceStyle === 'spriteRetro') {
+      const getSpritePiece = (pieceCode) => ({ squareWidth, isDragging }) => {
+        const pieceType = pieceCode[1];
+        const scaleFactor =
+          pieceType === 'P' ? 0.84
+            : (pieceType === 'R' || pieceType === 'N') ? 0.92
+              : 1.02;
+        const size = `${Math.max(24, squareWidth * scaleFactor)}px`;
+        const src = `/pieces/retro/${pieceCode}.png?v=1`;
+
+        return (
+          <div
+            style={{
+              width: '100%',
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              overflow: 'visible'
+            }}
+          >
+            <div
+              style={{
+                width: size,
+                height: size,
+                transformOrigin: 'center center',
+                transform: isDragging ? 'scale(1.05)' : 'scale(1)',
+                transition: 'transform 120ms ease-out'
+              }}
+            >
+              <img
+                src={src}
+                alt=""
+                draggable={false}
+                aria-hidden="true"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'contain',
+                  objectPosition: 'center center',
+                  display: 'block',
+                  imageRendering: 'pixelated'
+                }}
+              />
+            </div>
+          </div>
+        );
+      };
+
+      return {
+        wP: getSpritePiece('wP'),
+        wN: getSpritePiece('wN'),
+        wB: getSpritePiece('wB'),
+        wR: getSpritePiece('wR'),
+        wQ: getSpritePiece('wQ'),
+        wK: getSpritePiece('wK'),
+        bP: getSpritePiece('bP'),
+        bN: getSpritePiece('bN'),
+        bB: getSpritePiece('bB'),
+        bR: getSpritePiece('bR'),
+        bQ: getSpritePiece('bQ'),
+        bK: getSpritePiece('bK')
       };
     }
 
@@ -1293,6 +1670,11 @@ export default function App() {
               <select value={pieceStyle} onChange={(e) => setPieceStyle(e.target.value)}>
                 <option value="default">Default</option>
                 <option value="glyph">Glyph</option>
+                <option value="sprite26774">Line Art</option>
+                <option value="spriteChessPieces">Illustrated</option>
+                <option value="sprite3413429">Regal</option>
+                <option value="spriteChrisdesign">Modern</option>
+                <option value="spriteRetro">Retro</option>
                 <option value="alpha">Alpha</option>
                 <option value="glass">Glass</option>
               </select>
