@@ -28,6 +28,15 @@ function pointsForRank(rank, topN) {
   return Math.max(1, topN - rank + 1);
 }
 
+function getPromotionChoiceFromBoardPiece(pieceCode) {
+  if (!pieceCode || typeof pieceCode !== 'string' || pieceCode.length < 2) {
+    return undefined;
+  }
+
+  const piece = pieceCode[1]?.toLowerCase();
+  return ['q', 'r', 'b', 'n'].includes(piece) ? piece : undefined;
+}
+
 function getGameResultMessage(board) {
   if (!board.isGameOver()) {
     return '';
@@ -55,6 +64,45 @@ function getGameResultMessage(board) {
 
 const START_FEN = new Chess().fen();
 const VALID_MOVE_DOT = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' shape-rendering='geometricPrecision'%3E%3Ccircle cx='50' cy='50' r='22' fill='%23228B22' fill-opacity='0.97'/%3E%3C/svg%3E")`;
+const PIECE_TYPE_LABEL = { p: 'P', n: 'N', b: 'B', r: 'R', q: 'Q', k: 'K' };
+const PIECE_SYMBOLS = {
+  wK: '♔',
+  wQ: '♕',
+  wR: '♖',
+  wB: '♗',
+  wN: '♘',
+  wP: '♙',
+  bK: '♚',
+  bQ: '♛',
+  bR: '♜',
+  bB: '♝',
+  bN: '♞',
+  bP: '♟'
+};
+const BOARD_THEMES = {
+  classic: {
+    label: 'Classic',
+    light: '#F0D9B5',
+    dark: '#B58863',
+    board: { borderRadius: '10px', boxShadow: '0 10px 24px rgba(18, 34, 54, 0.24)' }
+  },
+  slate: {
+    label: 'Slate',
+    light: '#D9E1EF',
+    dark: '#60728D',
+    board: { borderRadius: '10px', boxShadow: '0 10px 24px rgba(10, 19, 34, 0.28)' }
+  },
+  tournament3d: {
+    label: 'Tournament 3D',
+    light: '#F6E7C8',
+    dark: '#B37B4B',
+    board: {
+      borderRadius: '12px',
+      boxShadow: '0 18px 28px rgba(20, 24, 31, 0.36), inset 0 2px 0 rgba(255, 255, 255, 0.38)',
+      background: 'linear-gradient(145deg, rgba(255,255,255,0.38), rgba(0,0,0,0.18))'
+    }
+  }
+};
 
 function extractSquareFromDragArgs(...args) {
   for (const arg of args) {
@@ -80,6 +128,8 @@ export default function App() {
   const [engineElo, setEngineElo] = useState(1200);
   const [topN, setTopN] = useState(3);
   const [playerColor, setPlayerColor] = useState('w');
+  const [boardStyle, setBoardStyle] = useState('classic');
+  const [pieceStyle, setPieceStyle] = useState('default');
   const [activePlayerColor, setActivePlayerColor] = useState('w');
   const [isGameStarted, setIsGameStarted] = useState(false);
   const [status, setStatus] = useState('Configure settings, then click Start Game.');
@@ -97,6 +147,7 @@ export default function App() {
   const [score, setScore] = useState({ earned: 0, possible: 0, errors: 0 });
 
   const boardWrapRef = useRef(null);
+  const boardAreaRef = useRef(null);
   const boardStatusRef = useRef(null);
   const moveListRef = useRef(null);
 
@@ -201,6 +252,153 @@ export default function App() {
 
     return rows;
   }, [moveHistory, playerMetaByPly]);
+
+  const capturedPieces = useMemo(() => {
+    const capturedByWhite = [];
+    const capturedByBlack = [];
+
+    for (const move of moveHistory) {
+      if (!move?.captured) {
+        continue;
+      }
+
+      const capturedCode = `${move.color === 'w' ? 'b' : 'w'}${move.captured.toUpperCase()}`;
+      if (!PIECE_SYMBOLS[capturedCode]) {
+        continue;
+      }
+
+      if (move.color === 'w') {
+        capturedByWhite.push(capturedCode);
+      } else {
+        capturedByBlack.push(capturedCode);
+      }
+    }
+
+    return { capturedByWhite, capturedByBlack };
+  }, [moveHistory]);
+
+  const chessboardTheme = useMemo(() => BOARD_THEMES[boardStyle] || BOARD_THEMES.classic, [boardStyle]);
+
+  const customPieces = useMemo(() => {
+    if (pieceStyle === 'default') {
+      return undefined;
+    }
+
+    if (pieceStyle === 'glyph') {
+      const getGlyphPiece = (pieceCode) => ({ squareWidth, isDragging }) => (
+        <div
+          style={{
+            width: '100%',
+            height: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            textAlign: 'center',
+            fontSize: `${squareWidth}px`,
+            lineHeight: 0.88,
+            color: pieceCode[0] === 'w' ? '#21344f' : '#0f1829',
+            textShadow: pieceCode[0] === 'w'
+              ? '0 1px 0 rgba(255,255,255,0.7)'
+              : '0 1px 0 rgba(255,255,255,0.24)',
+            transform: isDragging ? 'translateY(3px) scale(1.03)' : 'translateY(3px)',
+            transition: 'transform 120ms ease-out'
+          }}
+        >
+          {PIECE_SYMBOLS[pieceCode]}
+        </div>
+      );
+
+      return {
+        wP: getGlyphPiece('wP'),
+        wN: getGlyphPiece('wN'),
+        wB: getGlyphPiece('wB'),
+        wR: getGlyphPiece('wR'),
+        wQ: getGlyphPiece('wQ'),
+        wK: getGlyphPiece('wK'),
+        bP: getGlyphPiece('bP'),
+        bN: getGlyphPiece('bN'),
+        bB: getGlyphPiece('bB'),
+        bR: getGlyphPiece('bR'),
+        bQ: getGlyphPiece('bQ'),
+        bK: getGlyphPiece('bK')
+      };
+    }
+
+    const labels = { P: 'P', N: 'N', B: 'B', R: 'R', Q: 'Q', K: 'K' };
+    const fontSizeFactor = pieceStyle === 'glass' ? 0.44 : 0.42;
+    const borderRadius = pieceStyle === 'glass' ? '28%' : '22%';
+    const whiteBackground = pieceStyle === 'glass'
+      ? 'linear-gradient(140deg, #ffffff 12%, #eef4ff 52%, #d6e1f6 100%)'
+      : 'linear-gradient(140deg, #fffdf7 10%, #efe7d7 55%, #d7c7ad 100%)';
+    const blackBackground = pieceStyle === 'glass'
+      ? 'linear-gradient(140deg, #5a6b89 10%, #27344f 55%, #161f32 100%)'
+      : 'linear-gradient(140deg, #5e5450 8%, #2f2a29 58%, #1a1717 100%)';
+
+    const getPiece = (color, piece) => ({ squareWidth, isDragging }) => (
+      <div
+        style={{
+          width: `${Math.max(18, squareWidth * 0.74)}px`,
+          height: `${Math.max(18, squareWidth * 0.74)}px`,
+          margin: '0 auto',
+          borderRadius,
+          display: 'grid',
+          placeItems: 'center',
+          fontWeight: 800,
+          fontSize: `${Math.max(10, squareWidth * fontSizeFactor)}px`,
+          color: color === 'w' ? '#1f2d44' : '#ecf2ff',
+          background: color === 'w' ? whiteBackground : blackBackground,
+          border: color === 'w' ? '1px solid rgba(21, 36, 57, 0.22)' : '1px solid rgba(235, 241, 255, 0.15)',
+          boxShadow: isDragging
+            ? '0 8px 16px rgba(0, 0, 0, 0.32)'
+            : '0 2px 7px rgba(7, 15, 27, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.35)',
+          transform: isDragging ? 'scale(1.04)' : 'scale(1)',
+          transition: 'transform 120ms ease-out'
+        }}
+      >
+        {labels[piece]}
+      </div>
+    );
+
+    return {
+      wP: getPiece('w', 'P'),
+      wN: getPiece('w', 'N'),
+      wB: getPiece('w', 'B'),
+      wR: getPiece('w', 'R'),
+      wQ: getPiece('w', 'Q'),
+      wK: getPiece('w', 'K'),
+      bP: getPiece('b', 'P'),
+      bN: getPiece('b', 'N'),
+      bB: getPiece('b', 'B'),
+      bR: getPiece('b', 'R'),
+      bQ: getPiece('b', 'Q'),
+      bK: getPiece('b', 'K')
+    };
+  }, [pieceStyle]);
+
+  const renderCapturedPiece = (pieceCode, key) => {
+    return (
+      <span
+        className={`capture-piece-glyph ${pieceCode[0] === 'w' ? 'capture-piece-glyph-white-text' : 'capture-piece-glyph-black-text'}`}
+        key={key}
+        title={pieceCode}
+      >
+        {PIECE_SYMBOLS[pieceCode]}
+      </span>
+    );
+  };
+
+  const choosePromotionPiece = (color) => {
+    const input = window.prompt(
+      `Promote ${color === 'w' ? 'White' : 'Black'} pawn to (q, r, b, n):`,
+      'q'
+    );
+    if (input == null) {
+      return null;
+    }
+
+    const value = input.trim().toLowerCase();
+    return ['q', 'r', 'b', 'n'].includes(value) ? value : 'q';
+  };
 
   useEffect(() => {
     if (!moveListRef.current) {
@@ -378,7 +576,7 @@ export default function App() {
     setIsProcessing(false);
   };
 
-  const tryPlayerMove = (sourceSquare, targetSquare) => {
+  const tryPlayerMove = (sourceSquare, targetSquare, forcedPromotion) => {
     if (!ready) {
       setStatus('Engine not ready yet.');
       return false;
@@ -411,14 +609,14 @@ export default function App() {
 
     const testGame = new Chess(game.fen());
     const movingPiece = testGame.get(sourceSquare);
-    let promotion;
+    let promotion = forcedPromotion;
 
     if (
       movingPiece?.type === 'p' &&
       ((movingPiece.color === 'w' && targetSquare.endsWith('8')) ||
         (movingPiece.color === 'b' && targetSquare.endsWith('1')))
     ) {
-      promotion = 'q';
+      promotion = forcedPromotion;
     }
 
     let humanMove;
@@ -493,9 +691,13 @@ export default function App() {
     return true;
   };
 
-  const onDrop = (sourceSquare, targetSquare) => {
+  const onDrop = (sourceSquare, targetSquare, piece) => {
     setDragSourceSquare('');
-    return tryPlayerMove(sourceSquare, targetSquare);
+    return tryPlayerMove(sourceSquare, targetSquare, getPromotionChoiceFromBoardPiece(piece));
+  };
+
+  const onPromotionPieceSelect = (piece) => {
+    return !!piece;
   };
 
   const onPieceDragBegin = (...args) => {
@@ -540,7 +742,20 @@ export default function App() {
       return;
     }
 
-    const moved = tryPlayerMove(selectedSquare, square);
+    const selectedPiece = game.get(selectedSquare);
+    let promotionChoice;
+    if (
+      selectedPiece?.type === 'p' &&
+      ((selectedPiece.color === 'w' && square.endsWith('8')) ||
+        (selectedPiece.color === 'b' && square.endsWith('1')))
+    ) {
+      promotionChoice = choosePromotionPiece(selectedPiece.color);
+      if (!promotionChoice) {
+        return;
+      }
+    }
+
+    const moved = tryPlayerMove(selectedSquare, square, promotionChoice);
     if (!moved) {
       setSelectedSquare('');
     }
@@ -564,19 +779,54 @@ export default function App() {
       </div>
 
       <main className="board-wrap" ref={boardWrapRef}>
-        <Chessboard
-          id="trainer-board"
-          position={game.fen() || START_FEN}
-          onPieceDragBegin={onPieceDragBegin}
-          onPieceDragEnd={onPieceDragEnd}
-          onPieceDrop={onDrop}
-          onSquareClick={onSquareClick}
-          customSquareStyles={selectedSquareStyles}
-          boardWidth={boardWidth}
-          boardOrientation={activePlayerColor === 'w' ? 'white' : 'black'}
-          arePiecesDraggable={isGameStarted && !isProcessing && playerTurn && !game.isGameOver()}
-        />
+        <div className="board-area" ref={boardAreaRef}>
+          <Chessboard
+            id="trainer-board"
+            position={game.fen() || START_FEN}
+            onPieceDragBegin={onPieceDragBegin}
+            onPieceDragEnd={onPieceDragEnd}
+            onPieceDrop={onDrop}
+            onPromotionPieceSelect={onPromotionPieceSelect}
+            onSquareClick={onSquareClick}
+            customSquareStyles={selectedSquareStyles}
+            customLightSquareStyle={{ backgroundColor: chessboardTheme.light }}
+            customDarkSquareStyle={{ backgroundColor: chessboardTheme.dark }}
+            customBoardStyle={chessboardTheme.board}
+            customDropSquareStyle={{ boxShadow: 'inset 0 0 0 6px rgba(255, 255, 255, 0.78)' }}
+            customPieces={customPieces}
+            boardWidth={boardWidth}
+            boardOrientation={activePlayerColor === 'w' ? 'white' : 'black'}
+            arePiecesDraggable={isGameStarted && !isProcessing && playerTurn && !game.isGameOver()}
+          />
+        </div>
       </main>
+
+      <aside className="capture-bar" aria-label="Captured pieces">
+        <div className="capture-group">
+          <div className="capture-label">Black Taken</div>
+          <div className="capture-list">
+            {capturedPieces.capturedByWhite.length ? (
+              capturedPieces.capturedByWhite.map((piece, index) => (
+                renderCapturedPiece(piece, `bw-${piece}-${index}`)
+              ))
+            ) : (
+              <span className="capture-empty">-</span>
+            )}
+          </div>
+        </div>
+        <div className="capture-group">
+          <div className="capture-label">White Taken</div>
+          <div className="capture-list">
+            {capturedPieces.capturedByBlack.length ? (
+              capturedPieces.capturedByBlack.map((piece, index) => (
+                renderCapturedPiece(piece, `wb-${piece}-${index}`)
+              ))
+            ) : (
+              <span className="capture-empty">-</span>
+            )}
+          </div>
+        </div>
+      </aside>
 
       <div className="left-column">
         <header className="panel">
@@ -613,6 +863,25 @@ export default function App() {
                 <option value="w">White</option>
                 <option value="b">Black</option>
                 <option value="random">Random</option>
+              </select>
+            </label>
+
+            <label>
+              Board Style
+              <select value={boardStyle} onChange={(e) => setBoardStyle(e.target.value)}>
+                {Object.entries(BOARD_THEMES).map(([value, theme]) => (
+                  <option value={value} key={value}>{theme.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              Piece Style
+              <select value={pieceStyle} onChange={(e) => setPieceStyle(e.target.value)}>
+                <option value="default">Default</option>
+                <option value="glyph">Glyph</option>
+                <option value="alpha">Alpha</option>
+                <option value="glass">Glass</option>
               </select>
             </label>
 
