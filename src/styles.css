@@ -104,6 +104,26 @@ button {
   border-color: #16457a;
 }
 
+.success-button {
+  background: #1f8a4c;
+  border-color: #1f8a4c;
+}
+
+.success-button:hover:not(:disabled) {
+  background: #18713e;
+  border-color: #18713e;
+}
+
+.danger-button {
+  background: #c0392b;
+  border-color: #c0392b;
+}
+
+.danger-button:hover:not(:disabled) {
+  background: #a93226;
+  border-color: #a93226;
+}
+
 button:disabled,
 input:disabled,
 select:disabled {
@@ -330,6 +350,72 @@ select:disabled {
 .note {
   color: #3d4a56;
   font-size: 0.95rem;
+}
+
+.history-list {
+  margin-top: 0.45rem;
+  border: 1px solid #d4dfef;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  max-height: 180px;
+  overflow: auto;
+  padding: 0.35rem 0.45rem;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.history-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid #dbe4f2;
+}
+
+.history-list-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #2a4056;
+}
+
+.history-clear-button {
+  width: auto;
+  min-width: 0;
+  padding: 0.15rem 0.35rem;
+  line-height: 1;
+  font-size: 0.95rem;
+  border-radius: 6px;
+  background: #fff1f1;
+  color: #b42318;
+  border: 1px solid #f1b4b0;
+}
+
+.history-clear-button:hover:not(:disabled) {
+  background: #ffe2e0;
+}
+
+.history-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 0.35rem;
+  align-items: center;
+  font-size: 0.82rem;
+  color: #243547;
+}
+
+.history-rank {
+  color: #5a6c7f;
+}
+
+.history-main {
+  min-width: 0;
+}
+
+.history-time {
+  grid-column: 2;
+  color: #607489;
+  font-size: 0.75rem;
 }
 
 h2 {

@@ -42,6 +42,49 @@ function countPiecesFromFen(board) {
   return (board.fen().split(' ')[0].match(/[prnbqkPRNBQK]/g) || []).length;
 }
 
+const SCORE_HISTORY_STORAGE_KEY = 'chess-trainer-score-history-v1';
+
+function loadScoreHistory() {
+  try {
+    const raw = window.localStorage.getItem(SCORE_HISTORY_STORAGE_KEY);
+    if (!raw) {
+      return { classicBySkill: {}, randomByPhase: {} };
+    }
+    const parsed = JSON.parse(raw);
+    const classicBySkill = parsed?.classicBySkill && typeof parsed.classicBySkill === 'object'
+      ? parsed.classicBySkill
+      : {};
+    const randomByPhase = parsed?.randomByPhase && typeof parsed.randomByPhase === 'object'
+      ? parsed.randomByPhase
+      : {};
+
+    // Backward compatibility: older versions stored classic as a flat array.
+    if (Array.isArray(parsed?.classic) && parsed.classic.length && !Object.keys(classicBySkill).length) {
+      classicBySkill.legacy = parsed.classic;
+    }
+
+    // Backward compatibility: older versions stored random history as a flat array.
+    if (Array.isArray(parsed?.randomPosition) && parsed.randomPosition.length && !Object.keys(randomByPhase).length) {
+      randomByPhase.random = parsed.randomPosition;
+    }
+
+    return {
+      classicBySkill,
+      randomByPhase
+    };
+  } catch {
+    return { classicBySkill: {}, randomByPhase: {} };
+  }
+}
+
+function formatHistoryTimestamp(timestamp) {
+  try {
+    return new Date(timestamp).toLocaleString();
+  } catch {
+    return '';
+  }
+}
+
 function getPhaseConfig(phase) {
   switch (phase) {
     case 'opening':
@@ -279,6 +322,10 @@ export default function App() {
   const [showValidMoves, setShowValidMoves] = useState(true);
   const [score, setScore] = useState({ earned: 0, possible: 0, errors: 0 });
   const [awaitingNextRandomFen, setAwaitingNextRandomFen] = useState(false);
+  const [randomPositionsCompleted, setRandomPositionsCompleted] = useState(0);
+  const [currentSessionSaved, setCurrentSessionSaved] = useState(false);
+  const [scoreHistory, setScoreHistory] = useState(() => loadScoreHistory());
+  const [showScoreHistory, setShowScoreHistory] = useState(false);
 
   const boardWrapRef = useRef(null);
   const boardAreaRef = useRef(null);
@@ -362,6 +409,56 @@ export default function App() {
     }
     return ((Math.max(0, score.earned) / score.possible) * 100).toFixed(1);
   }, [score]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SCORE_HISTORY_STORAGE_KEY, JSON.stringify(scoreHistory));
+    } catch {
+      // Ignore storage errors (private mode, quota, etc.)
+    }
+  }, [scoreHistory]);
+
+  const classicHistoryForSelectedSkill = useMemo(
+    () => scoreHistory.classicBySkill?.[String(engineSkillLevel)] ?? [],
+    [scoreHistory, engineSkillLevel]
+  );
+
+  const randomHistoryForSelectedPhase = useMemo(
+    () => scoreHistory.randomByPhase?.[String(randomFenPhase)] ?? [],
+    [scoreHistory, randomFenPhase]
+  );
+
+  const bestClassicScore = useMemo(() => {
+    if (!classicHistoryForSelectedSkill.length) {
+      return null;
+    }
+    return [...classicHistoryForSelectedSkill].sort((a, b) => {
+      if (b.percent !== a.percent) return b.percent - a.percent;
+      if (b.possible !== a.possible) return b.possible - a.possible;
+      return b.earned - a.earned;
+    })[0];
+  }, [classicHistoryForSelectedSkill]);
+
+  const bestRandomSession = useMemo(() => {
+    if (!randomHistoryForSelectedPhase.length) {
+      return null;
+    }
+    return [...randomHistoryForSelectedPhase].sort((a, b) => {
+      if (b.positions !== a.positions) return b.positions - a.positions;
+      if (b.percent !== a.percent) return b.percent - a.percent;
+      if (b.possible !== a.possible) return b.possible - a.possible;
+      return b.earned - a.earned;
+    })[0];
+  }, [randomHistoryForSelectedPhase]);
+
+  const activeScoreHistory = useMemo(
+    () => (randomFenMode ? randomHistoryForSelectedPhase : classicHistoryForSelectedSkill),
+    [randomFenMode, randomHistoryForSelectedPhase, classicHistoryForSelectedSkill]
+  );
+
+  useEffect(() => {
+    setShowScoreHistory(false);
+  }, [gameMode]);
 
   const playerMetaByPly = useMemo(() => {
     const map = new Map();
@@ -475,25 +572,44 @@ export default function App() {
     const getPiece = (color, piece) => ({ squareWidth, isDragging }) => (
       <div
         style={{
-          width: `${Math.max(18, squareWidth * 0.74)}px`,
-          height: `${Math.max(18, squareWidth * 0.74)}px`,
-          margin: '0 auto',
-          borderRadius,
-          display: 'grid',
-          placeItems: 'center',
-          fontWeight: 800,
-          fontSize: `${Math.max(10, squareWidth * fontSizeFactor)}px`,
-          color: color === 'w' ? '#1f2d44' : '#ecf2ff',
-          background: color === 'w' ? whiteBackground : blackBackground,
-          border: color === 'w' ? '1px solid rgba(21, 36, 57, 0.22)' : '1px solid rgba(235, 241, 255, 0.15)',
-          boxShadow: isDragging
-            ? '0 8px 16px rgba(0, 0, 0, 0.32)'
-            : '0 2px 7px rgba(7, 15, 27, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.35)',
-          transform: isDragging ? 'scale(1.04)' : 'scale(1)',
-          transition: 'transform 120ms ease-out'
+          width: '100%',
+          height: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center'
         }}
       >
-        {labels[piece]}
+        <div
+          style={{
+            width: `${Math.max(18, squareWidth * 0.74)}px`,
+            height: `${Math.max(18, squareWidth * 0.74)}px`,
+            borderRadius,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            textAlign: 'center',
+            color: color === 'w' ? '#1f2d44' : '#ecf2ff',
+            background: color === 'w' ? whiteBackground : blackBackground,
+            border: color === 'w' ? '1px solid rgba(21, 36, 57, 0.22)' : '1px solid rgba(235, 241, 255, 0.15)',
+            boxShadow: isDragging
+              ? '0 8px 16px rgba(0, 0, 0, 0.32)'
+              : '0 2px 7px rgba(7, 15, 27, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.35)',
+            transform: isDragging ? 'scale(1.04)' : 'scale(1)',
+            transition: 'transform 120ms ease-out'
+          }}
+        >
+          <span
+            style={{
+              display: 'block',
+              fontWeight: 800,
+              fontSize: `${Math.max(10, squareWidth * fontSizeFactor)}px`,
+              lineHeight: 1,
+              transform: 'translateY(0.08em)'
+            }}
+          >
+            {labels[piece]}
+          </span>
+        </div>
       </div>
     );
 
@@ -587,6 +703,27 @@ export default function App() {
   };
 
   const resetToSetup = () => {
+    if (isGameStarted && randomFenMode && !currentSessionSaved && (score.possible > 0 || randomPositionsCompleted > 0)) {
+      const percent = score.possible ? (Math.max(0, score.earned) / score.possible) * 100 : 0;
+      setScoreHistory((prev) => ({
+        ...prev,
+        randomByPhase: {
+          ...(prev.randomByPhase || {}),
+          [String(randomFenPhase)]: [
+            {
+              earned: score.earned,
+              possible: score.possible,
+              percent,
+              positions: randomPositionsCompleted,
+              timestamp: Date.now(),
+              phase: randomFenPhase
+            },
+            ...((prev.randomByPhase?.[String(randomFenPhase)] ?? []))
+          ].slice(0, 100)
+        }
+      }));
+    }
+
     setGame(new Chess());
     setIsGameStarted(false);
     setCurrentTopMoves([]);
@@ -602,18 +739,41 @@ export default function App() {
     setErrorSquareStyles({});
     setActivePlayerColor('w');
     setAwaitingNextRandomFen(false);
+    setRandomPositionsCompleted(0);
+    setCurrentSessionSaved(false);
   };
 
   const finishGame = (board, scoreSnapshot = score) => {
-    const percent = scoreSnapshot.possible
-      ? ((Math.max(0, scoreSnapshot.earned) / scoreSnapshot.possible) * 100).toFixed(1)
-      : '0.0';
+    const percentValue = scoreSnapshot.possible
+      ? (Math.max(0, scoreSnapshot.earned) / scoreSnapshot.possible) * 100
+      : 0;
+    const percent = percentValue.toFixed(1);
     setStatus(`Final score: ${Math.max(0, scoreSnapshot.earned)}/${scoreSnapshot.possible} (${percent}%).`);
     setCurrentTopMoves([]);
     setIsProcessing(false);
     setSelectedSquare('');
     setDragSourceSquare('');
     setAwaitingNextRandomFen(false);
+
+    if (!randomFenMode && !currentSessionSaved && scoreSnapshot.possible > 0) {
+      setScoreHistory((prev) => ({
+        ...prev,
+        classicBySkill: {
+          ...(prev.classicBySkill || {}),
+          [String(engineSkillLevel)]: [
+            {
+              earned: scoreSnapshot.earned,
+              possible: scoreSnapshot.possible,
+              percent: percentValue,
+              timestamp: Date.now(),
+              skillLevel: engineSkillLevel
+            },
+            ...((prev.classicBySkill?.[String(engineSkillLevel)] ?? []))
+          ].slice(0, 100)
+        }
+      }));
+      setCurrentSessionSaved(true);
+    }
   };
 
   const preloadTopMoves = async (fen, nextTopN) => {
@@ -628,12 +788,13 @@ export default function App() {
       minLegalMoves: Math.max(1, topN),
       phase: randomFenPhase
     });
+    const seedHistory = board.history({ verbose: true });
 
     setGame(new Chess(board.fen()));
     setSelectedSquare('');
     setDragSourceSquare('');
     setErrorSquareStyles({});
-    setMoveHistory([]);
+    setMoveHistory(seedHistory);
     setPlayerMoveMeta([]);
     setCurrentTopMoves([]);
     setAwaitingNextRandomFen(false);
@@ -712,12 +873,14 @@ export default function App() {
     setScore({ earned: 0, possible: 0, errors: 0 });
     setErrorSquareStyles({});
     setIsProcessing(true);
+    setRandomPositionsCompleted(0);
+    setCurrentSessionSaved(false);
 
     try {
-      if (randomFenMode) {
+          if (randomFenMode) {
         await loadRandomFenPosition(
           chosenColor,
-          `Random FEN mode started as ${chosenColor === 'w' ? 'White' : 'Black'}.`
+          `Random mode started as ${chosenColor === 'w' ? 'White' : 'Black'}.`
         );
         setIsProcessing(false);
         return;
@@ -864,6 +1027,7 @@ export default function App() {
     setStatus(`${rankText}. +${earnedPoints} points.`);
 
     if (randomFenMode) {
+      setRandomPositionsCompleted((prev) => prev + 1);
       setAwaitingNextRandomFen(true);
       setIsProcessing(false);
       setStatus(`${rankText}. +${earnedPoints} points. Click Next Position.`);
@@ -881,6 +1045,30 @@ export default function App() {
 
   const onPromotionPieceSelect = (piece) => {
     return !!piece;
+  };
+
+  const clearActiveScoreHistory = () => {
+    const confirmMessage = randomFenMode
+      ? 'Clear all Random Position score history and top score?'
+      : `Clear Classic score history and top score for Skill Level ${engineSkillLevel}?`;
+
+    if (!window.confirm(confirmMessage)) {
+      return;
+    }
+
+    setScoreHistory((prev) => {
+      if (randomFenMode) {
+        const nextRandomByPhase = { ...(prev.randomByPhase || {}) };
+        delete nextRandomByPhase[String(randomFenPhase)];
+        return { ...prev, randomByPhase: nextRandomByPhase };
+      }
+
+      const nextClassicBySkill = { ...(prev.classicBySkill || {}) };
+      delete nextClassicBySkill[String(engineSkillLevel)];
+      return { ...prev, classicBySkill: nextClassicBySkill };
+    });
+    setShowScoreHistory(false);
+    setStatus(randomFenMode ? 'Random score history cleared.' : `Classic history cleared for skill level ${engineSkillLevel}.`);
   };
 
   const onPieceDragBegin = (...args) => {
@@ -1120,9 +1308,11 @@ export default function App() {
             </label>
 
             {!isGameStarted ? (
-              <button onClick={startGame} type="button" disabled={!ready || isProcessing}>Start Game</button>
+              <button className="success-button" onClick={startGame} type="button" disabled={!ready || isProcessing}>
+                Start Game
+              </button>
             ) : (
-              <button onClick={resetToSetup} type="button">New Game</button>
+              <button className="danger-button" onClick={resetToSetup} type="button">End Game</button>
             )}
           </div>
         </header>
@@ -1132,6 +1322,80 @@ export default function App() {
           <p><strong>Update:</strong> {status}</p>
           <p><strong>Current:</strong> {score.earned} / {score.possible} ({scorePercent}%)</p>
           <p><strong>Mistakes:</strong> {score.errors}</p>
+          {randomFenMode ? <p><strong>Positions:</strong> {randomPositionsCompleted}</p> : null}
+          {!randomFenMode ? (
+            bestClassicScore ? (
+              <p>
+                <strong>Best Classic:</strong>{' '}
+                {Math.max(0, bestClassicScore.earned)} / {bestClassicScore.possible} ({bestClassicScore.percent.toFixed(1)}%)
+              </p>
+            ) : (
+              <p><strong>Best Classic:</strong> -</p>
+            )
+          ) : (
+            bestRandomSession ? (
+              <p>
+                <strong>Best Random:</strong>{' '}
+                {bestRandomSession.positions} positions, {Math.max(0, bestRandomSession.earned)} / {bestRandomSession.possible} ({bestRandomSession.percent.toFixed(1)}%)
+                {` [${randomFenPhase === 'random' ? 'Random' : randomFenPhase}]`}
+              </p>
+            ) : (
+              <p><strong>Best Random:</strong> -</p>
+            )
+          )}
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => setShowScoreHistory((prev) => !prev)}
+          >
+            {showScoreHistory ? 'Hide Score History' : 'Show Score History'}
+          </button>
+          {showScoreHistory ? (
+            activeScoreHistory.length ? (
+              <div className="history-list">
+                <div className="history-list-head">
+                  <span className="history-list-title">
+                    {randomFenMode
+                      ? `Random History (${randomFenPhase === 'random' ? 'Random' : randomFenPhase})`
+                      : `Classic History (Level ${engineSkillLevel})`}
+                  </span>
+                  <button
+                    type="button"
+                    className="history-clear-button"
+                    onClick={clearActiveScoreHistory}
+                    title={randomFenMode ? 'Clear Random History' : `Clear Classic History (Level ${engineSkillLevel})`}
+                    aria-label={randomFenMode
+                      ? `Clear Random History for ${randomFenPhase === 'random' ? 'Random' : randomFenPhase} phase`
+                      : `Clear Classic History for Skill Level ${engineSkillLevel}`}
+                  >
+                    🗑
+                  </button>
+                </div>
+                {activeScoreHistory.slice(0, 20).map((entry, index) => (
+                  <div className="history-row" key={`${entry.timestamp}-${index}`}>
+                    <span className="history-rank">#{index + 1}</span>
+                    <span className="history-main">
+                      {randomFenMode
+                        ? `${entry.positions} pos, ${Math.max(0, entry.earned)}/${entry.possible} (${entry.percent.toFixed(1)}%)`
+                        : `${Math.max(0, entry.earned)}/${entry.possible} (${entry.percent.toFixed(1)}%)`}
+                    </span>
+                    <span className="history-time">{formatHistoryTimestamp(entry.timestamp)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="history-list">
+                <div className="history-list-head">
+                  <span className="history-list-title">
+                    {randomFenMode
+                      ? `Random History (${randomFenPhase === 'random' ? 'Random' : randomFenPhase})`
+                      : `Classic History (Level ${engineSkillLevel})`}
+                  </span>
+                </div>
+                <p className="note">No score history yet.</p>
+              </div>
+            )
+          ) : null}
 
           {lastEvaluatedMoves.length ? (
             <>
@@ -1151,35 +1415,33 @@ export default function App() {
           {error ? <p className="error">{error}</p> : null}
         </section>
 
-        {!randomFenMode ? (
-          <section className="panel">
-            <h2 className="panel-title">Move List</h2>
-            {moveRows.length ? (
-              <div className="move-list" ref={moveListRef}>
-                <div className="move-row move-head">
-                  <span className="move-num">#</span>
-                  <span className={resolvedPlayerColor === 'w' ? 'player-col' : ''}>{whiteHeaderLabel}</span>
-                  <span className={resolvedPlayerColor === 'b' ? 'player-col' : ''}>{blackHeaderLabel}</span>
-                </div>
-                {moveRows.map((row) => (
-                  <div className="move-row" key={row.moveNumber}>
-                    <span className="move-num">{row.moveNumber}.</span>
-                    <span className={resolvedPlayerColor === 'w' ? 'player-col' : ''}>
-                      {row.white ? row.white.san : '-'}
-                      {row.whiteMeta ? ` (#${row.whiteMeta.rank})` : ''}
-                    </span>
-                    <span className={resolvedPlayerColor === 'b' ? 'player-col' : ''}>
-                      {row.black ? row.black.san : '-'}
-                      {row.blackMeta ? ` (#${row.blackMeta.rank})` : ''}
-                    </span>
-                  </div>
-                ))}
+        <section className="panel">
+          <h2 className="panel-title">Move List</h2>
+          {moveRows.length ? (
+            <div className="move-list" ref={moveListRef}>
+              <div className="move-row move-head">
+                <span className="move-num">#</span>
+                <span className={resolvedPlayerColor === 'w' ? 'player-col' : ''}>{whiteHeaderLabel}</span>
+                <span className={resolvedPlayerColor === 'b' ? 'player-col' : ''}>{blackHeaderLabel}</span>
               </div>
-            ) : (
-              <p>No moves yet.</p>
-            )}
-          </section>
-        ) : null}
+              {moveRows.map((row) => (
+                <div className="move-row" key={row.moveNumber}>
+                  <span className="move-num">{row.moveNumber}.</span>
+                  <span className={resolvedPlayerColor === 'w' ? 'player-col' : ''}>
+                    {row.white ? row.white.san : '-'}
+                    {row.whiteMeta ? ` (#${row.whiteMeta.rank})` : ''}
+                  </span>
+                  <span className={resolvedPlayerColor === 'b' ? 'player-col' : ''}>
+                    {row.black ? row.black.san : '-'}
+                    {row.blackMeta ? ` (#${row.blackMeta.rank})` : ''}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p>No moves yet.</p>
+          )}
+        </section>
       </div>
     </div>
   );
