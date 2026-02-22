@@ -34,6 +34,131 @@ function approximateEloForSkillLevel(level) {
   return Math.round(minElo + ((maxElo - minElo) * (level / 20)));
 }
 
+function randomInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function countPiecesFromFen(board) {
+  return (board.fen().split(' ')[0].match(/[prnbqkPRNBQK]/g) || []).length;
+}
+
+function getPhaseConfig(phase) {
+  switch (phase) {
+    case 'opening':
+      return { plyMin: 4, plyMax: 14, minPieces: 22, maxPieces: 32, captureBias: 0.15 };
+    case 'middlegame':
+      return { plyMin: 12, plyMax: 44, minPieces: 12, maxPieces: 26, captureBias: 0.5 };
+    case 'endgame':
+      return { plyMin: 18, plyMax: 140, minPieces: 4, maxPieces: 12, captureBias: 0.9 };
+    case 'random':
+    default:
+      return { plyMin: 8, plyMax: 36, minPieces: 8, maxPieces: 32, captureBias: 0.4 };
+  }
+}
+
+function pickBiasedRandomMove(board, legalMoves, phaseConfig) {
+  const captures = legalMoves.filter((move) => move.captured);
+  const promotions = legalMoves.filter((move) => move.promotion);
+  const checks = legalMoves.filter((move) => {
+    const test = new Chess(board.fen());
+    test.move(move);
+    return test.inCheck() && !test.isGameOver();
+  });
+
+  const roll = Math.random();
+  if (captures.length && roll < phaseConfig.captureBias) {
+    return captures[randomInt(0, captures.length - 1)];
+  }
+
+  if (promotions.length && roll < 0.97) {
+    return promotions[randomInt(0, promotions.length - 1)];
+  }
+
+  if (checks.length && roll < 0.55) {
+    return checks[randomInt(0, checks.length - 1)];
+  }
+
+  return legalMoves[randomInt(0, legalMoves.length - 1)];
+}
+
+function generateRandomTrainingBoard({ playerColor, minLegalMoves, phase }) {
+  const maxAttempts = phase === 'endgame' ? 220 : 140;
+  const phaseConfig = getPhaseConfig(phase);
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const board = new Chess();
+    let failed = false;
+    let reachedCandidate = false;
+
+    for (let ply = 0; ply < phaseConfig.plyMax; ply += 1) {
+      const legalMoves = board.moves({ verbose: true });
+      if (!legalMoves.length) {
+        failed = true;
+        break;
+      }
+
+      const move = pickBiasedRandomMove(board, legalMoves, phaseConfig);
+      board.move(move);
+
+      if (board.isGameOver()) {
+        failed = true;
+        break;
+      }
+
+      if (ply + 1 >= phaseConfig.plyMin) {
+        const pieceCount = countPiecesFromFen(board);
+        if (pieceCount >= phaseConfig.minPieces && pieceCount <= phaseConfig.maxPieces) {
+          reachedCandidate = true;
+          if (phase !== 'endgame' || pieceCount <= phaseConfig.maxPieces) {
+            break;
+          }
+        }
+      }
+    }
+
+    if (failed || !reachedCandidate) {
+      continue;
+    }
+
+    if (board.turn() !== playerColor) {
+      const legalMoves = board.moves({ verbose: true });
+      if (!legalMoves.length) {
+        continue;
+      }
+      board.move(legalMoves[randomInt(0, legalMoves.length - 1)]);
+    }
+
+    if (board.turn() !== playerColor || board.isGameOver()) {
+      continue;
+    }
+
+    const finalMoves = board.moves();
+    if (finalMoves.length < minLegalMoves) {
+      continue;
+    }
+
+    const pieceCount = countPiecesFromFen(board);
+    if (pieceCount < phaseConfig.minPieces || pieceCount > phaseConfig.maxPieces) {
+      continue;
+    }
+
+    if (phase === 'endgame' && finalMoves.length < Math.max(3, minLegalMoves)) {
+      continue;
+    }
+
+    return board;
+  }
+
+  const fallback = new Chess();
+  if (fallback.turn() !== playerColor) {
+    const legalMoves = fallback.moves({ verbose: true });
+    if (legalMoves.length) {
+      fallback.move(legalMoves[randomInt(0, legalMoves.length - 1)]);
+    }
+  }
+  return fallback;
+}
+
 function getPromotionChoiceFromBoardPiece(pieceCode) {
   if (!pieceCode || typeof pieceCode !== 'string' || pieceCode.length < 2) {
     return undefined;
@@ -133,6 +258,8 @@ export default function App() {
   const [game, setGame] = useState(() => new Chess());
   const [engineSkillLevel, setEngineSkillLevel] = useState(5);
   const [topN, setTopN] = useState(3);
+  const [gameMode, setGameMode] = useState('classic');
+  const [randomFenPhase, setRandomFenPhase] = useState('random');
   const [playerColor, setPlayerColor] = useState('w');
   const [boardStyle, setBoardStyle] = useState('classic');
   const [pieceStyle, setPieceStyle] = useState('default');
@@ -151,6 +278,7 @@ export default function App() {
   const [errorSquareStyles, setErrorSquareStyles] = useState({});
   const [showValidMoves, setShowValidMoves] = useState(true);
   const [score, setScore] = useState({ earned: 0, possible: 0, errors: 0 });
+  const [awaitingNextRandomFen, setAwaitingNextRandomFen] = useState(false);
 
   const boardWrapRef = useRef(null);
   const boardAreaRef = useRef(null);
@@ -205,12 +333,13 @@ export default function App() {
   const turnLabel = useMemo(() => (game.turn() === 'w' ? 'White' : 'Black'), [game]);
   const playerTurn = game.turn() === activePlayerColor;
   const engineColor = activePlayerColor === 'w' ? 'b' : 'w';
+  const randomFenMode = gameMode === 'random-fen';
   const settingsLocked = isGameStarted;
   const resolvedPlayerColor = isGameStarted ? activePlayerColor : (playerColor === 'random' ? null : playerColor);
   const whiteHeaderLabel = resolvedPlayerColor === 'w' ? 'White (You)' : 'White';
   const blackHeaderLabel = resolvedPlayerColor === 'b' ? 'Black (You)' : 'Black';
   const resultMessage = game.isGameOver() ? getGameResultMessage(game) : '';
-  const engineThinking = isGameStarted && !game.isGameOver() && game.turn() === engineColor && isProcessing;
+  const engineThinking = isGameStarted && !game.isGameOver() && isProcessing && (randomFenMode || game.turn() === engineColor);
 
   const turnDisplay = useMemo(() => {
     if (!isGameStarted) {
@@ -222,8 +351,11 @@ export default function App() {
     if (playerTurn) {
       return `${turnLabel} to move (You)`;
     }
+    if (randomFenMode) {
+      return `${turnLabel} to move`;
+    }
     return `${turnLabel} to move (Engine)`;
-  }, [isGameStarted, game, playerTurn, turnLabel]);
+  }, [isGameStarted, game, playerTurn, turnLabel, randomFenMode]);
   const scorePercent = useMemo(() => {
     if (!score.possible) {
       return 0;
@@ -469,6 +601,7 @@ export default function App() {
     setScore({ earned: 0, possible: 0, errors: 0 });
     setErrorSquareStyles({});
     setActivePlayerColor('w');
+    setAwaitingNextRandomFen(false);
   };
 
   const finishGame = (board, scoreSnapshot = score) => {
@@ -480,12 +613,48 @@ export default function App() {
     setIsProcessing(false);
     setSelectedSquare('');
     setDragSourceSquare('');
+    setAwaitingNextRandomFen(false);
   };
 
   const preloadTopMoves = async (fen, nextTopN) => {
     const { topMoves } = await evaluateTopMoves({ fen, topN: nextTopN });
     setCurrentTopMoves(topMoves);
     return topMoves;
+  };
+
+  const loadRandomFenPosition = async (playerSide, statusMessage) => {
+    const board = generateRandomTrainingBoard({
+      playerColor: playerSide,
+      minLegalMoves: Math.max(1, topN),
+      phase: randomFenPhase
+    });
+
+    setGame(new Chess(board.fen()));
+    setSelectedSquare('');
+    setDragSourceSquare('');
+    setErrorSquareStyles({});
+    setMoveHistory([]);
+    setPlayerMoveMeta([]);
+    setCurrentTopMoves([]);
+    setAwaitingNextRandomFen(false);
+
+    await preloadTopMoves(board.fen(), topN);
+    setStatus(statusMessage || 'Random position loaded.');
+  };
+
+  const nextRandomFenPosition = async () => {
+    if (!isGameStarted || !randomFenMode || isProcessing || !awaitingNextRandomFen) {
+      return;
+    }
+
+    setIsProcessing(true);
+    try {
+      await loadRandomFenPosition(activePlayerColor, 'New random position loaded.');
+    } catch (e) {
+      setStatus(e.message || 'Engine error while loading random position.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const applyEngineReply = async (boardAfterHumanMove, lastRankLabel) => {
@@ -527,9 +696,9 @@ export default function App() {
       return;
     }
 
-    const board = new Chess();
     const chosenColor =
       playerColor === 'random' ? (Math.random() < 0.5 ? 'w' : 'b') : playerColor;
+    const board = new Chess();
     setGame(board);
     setIsGameStarted(true);
     setActivePlayerColor(chosenColor);
@@ -545,6 +714,15 @@ export default function App() {
     setIsProcessing(true);
 
     try {
+      if (randomFenMode) {
+        await loadRandomFenPosition(
+          chosenColor,
+          `Random FEN mode started as ${chosenColor === 'w' ? 'White' : 'Black'}.`
+        );
+        setIsProcessing(false);
+        return;
+      }
+
       if (chosenColor === 'b') {
         const { bestMove } = await evaluateTopMoves({ fen: board.fen(), topN: 1 });
         if (bestMove && bestMove !== '(none)') {
@@ -582,6 +760,11 @@ export default function App() {
 
     if (isProcessing) {
       setStatus('Engine is thinking. Please wait.');
+      return false;
+    }
+
+    if (randomFenMode && awaitingNextRandomFen) {
+      setStatus('Click Next Position to continue.');
       return false;
     }
 
@@ -672,13 +855,20 @@ export default function App() {
     setShowLastEvaluated(false);
     setCurrentTopMoves([]);
 
-    if (testGame.isGameOver()) {
+    if (!randomFenMode && testGame.isGameOver()) {
       finishGame(testGame, projectedScore);
       return true;
     }
 
     setIsProcessing(true);
     setStatus(`${rankText}. +${earnedPoints} points.`);
+
+    if (randomFenMode) {
+      setAwaitingNextRandomFen(true);
+      setIsProcessing(false);
+      setStatus(`${rankText}. +${earnedPoints} points. Click Next Position.`);
+      return true;
+    }
 
     void applyEngineReply(testGame, `${rankText}. +${earnedPoints} points`);
     return true;
@@ -709,6 +899,11 @@ export default function App() {
   };
 
   const onSquareClick = (square) => {
+    if (randomFenMode && awaitingNextRandomFen) {
+      setStatus('Click Next Position to continue.');
+      return;
+    }
+
     if (!isGameStarted || !playerTurn || isProcessing || game.isGameOver()) {
       return;
     }
@@ -791,32 +986,45 @@ export default function App() {
         </div>
       </main>
 
-      <aside className="capture-bar" aria-label="Captured pieces">
-        <div className="capture-group">
-          <div className="capture-label">Black Taken</div>
-          <div className="capture-list">
-            {capturedPieces.capturedByWhite.length ? (
-              capturedPieces.capturedByWhite.map((piece, index) => (
-                renderCapturedPiece(piece, `bw-${piece}-${index}`)
-              ))
-            ) : (
-              <span className="capture-empty">-</span>
-            )}
-          </div>
+      {randomFenMode ? (
+        <div className="random-next-bar" aria-label="Random position controls">
+          <button
+            type="button"
+            className="random-next-button"
+            onClick={nextRandomFenPosition}
+            disabled={!isGameStarted || isProcessing || !awaitingNextRandomFen}
+          >
+            Next Position
+          </button>
         </div>
-        <div className="capture-group">
-          <div className="capture-label">White Taken</div>
-          <div className="capture-list">
-            {capturedPieces.capturedByBlack.length ? (
-              capturedPieces.capturedByBlack.map((piece, index) => (
-                renderCapturedPiece(piece, `wb-${piece}-${index}`)
-              ))
-            ) : (
-              <span className="capture-empty">-</span>
-            )}
+      ) : (
+        <aside className="capture-bar" aria-label="Captured pieces">
+          <div className="capture-group">
+            <div className="capture-label">Black Taken</div>
+            <div className="capture-list">
+              {capturedPieces.capturedByWhite.length ? (
+                capturedPieces.capturedByWhite.map((piece, index) => (
+                  renderCapturedPiece(piece, `bw-${piece}-${index}`)
+                ))
+              ) : (
+                <span className="capture-empty">-</span>
+              )}
+            </div>
           </div>
-        </div>
-      </aside>
+          <div className="capture-group">
+            <div className="capture-label">White Taken</div>
+            <div className="capture-list">
+              {capturedPieces.capturedByBlack.length ? (
+                capturedPieces.capturedByBlack.map((piece, index) => (
+                  renderCapturedPiece(piece, `wb-${piece}-${index}`)
+                ))
+              ) : (
+                <span className="capture-empty">-</span>
+              )}
+            </div>
+          </div>
+        </aside>
+      )}
 
       <div className="left-column">
         <header className="panel">
@@ -824,19 +1032,43 @@ export default function App() {
 
           <div className="controls">
             <label>
-              Skill Level
-              <select
-                value={engineSkillLevel}
-                disabled={settingsLocked}
-                onChange={(e) => setEngineSkillLevel(clamp(Number(e.target.value || 5), 0, 20))}
-              >
-                {Array.from({ length: 21 }, (_, i) => (
-                  <option key={i} value={i}>
-                    {`Level ${i} (~${approximateEloForSkillLevel(i)} Elo)`}
-                  </option>
-                ))}
+              Game Mode
+              <select value={gameMode} disabled={settingsLocked} onChange={(e) => setGameMode(e.target.value)}>
+                <option value="classic">Classic</option>
+                <option value="random-fen">Random Position</option>
               </select>
             </label>
+
+            {randomFenMode ? (
+              <label>
+                Position Phase
+                <select
+                  value={randomFenPhase}
+                  disabled={settingsLocked}
+                  onChange={(e) => setRandomFenPhase(e.target.value)}
+                >
+                  <option value="random">Random</option>
+                  <option value="opening">Opening</option>
+                  <option value="middlegame">Middlegame</option>
+                  <option value="endgame">Endgame</option>
+                </select>
+              </label>
+            ) : (
+              <label>
+                Skill Level
+                <select
+                  value={engineSkillLevel}
+                  disabled={settingsLocked}
+                  onChange={(e) => setEngineSkillLevel(clamp(Number(e.target.value || 5), 0, 20))}
+                >
+                  {Array.from({ length: 21 }, (_, i) => (
+                    <option key={i} value={i}>
+                      {`Level ${i} (~${approximateEloForSkillLevel(i)} Elo)`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
 
             <label>
               Top N
@@ -919,33 +1151,35 @@ export default function App() {
           {error ? <p className="error">{error}</p> : null}
         </section>
 
-        <section className="panel">
-          <h2 className="panel-title">Move List</h2>
-          {moveRows.length ? (
-            <div className="move-list" ref={moveListRef}>
-              <div className="move-row move-head">
-                <span className="move-num">#</span>
-                <span className={resolvedPlayerColor === 'w' ? 'player-col' : ''}>{whiteHeaderLabel}</span>
-                <span className={resolvedPlayerColor === 'b' ? 'player-col' : ''}>{blackHeaderLabel}</span>
-              </div>
-              {moveRows.map((row) => (
-                <div className="move-row" key={row.moveNumber}>
-                  <span className="move-num">{row.moveNumber}.</span>
-                  <span className={resolvedPlayerColor === 'w' ? 'player-col' : ''}>
-                    {row.white ? row.white.san : '-'}
-                    {row.whiteMeta ? ` (#${row.whiteMeta.rank})` : ''}
-                  </span>
-                  <span className={resolvedPlayerColor === 'b' ? 'player-col' : ''}>
-                    {row.black ? row.black.san : '-'}
-                    {row.blackMeta ? ` (#${row.blackMeta.rank})` : ''}
-                  </span>
+        {!randomFenMode ? (
+          <section className="panel">
+            <h2 className="panel-title">Move List</h2>
+            {moveRows.length ? (
+              <div className="move-list" ref={moveListRef}>
+                <div className="move-row move-head">
+                  <span className="move-num">#</span>
+                  <span className={resolvedPlayerColor === 'w' ? 'player-col' : ''}>{whiteHeaderLabel}</span>
+                  <span className={resolvedPlayerColor === 'b' ? 'player-col' : ''}>{blackHeaderLabel}</span>
                 </div>
-              ))}
-            </div>
-          ) : (
-            <p>No moves yet.</p>
-          )}
-        </section>
+                {moveRows.map((row) => (
+                  <div className="move-row" key={row.moveNumber}>
+                    <span className="move-num">{row.moveNumber}.</span>
+                    <span className={resolvedPlayerColor === 'w' ? 'player-col' : ''}>
+                      {row.white ? row.white.san : '-'}
+                      {row.whiteMeta ? ` (#${row.whiteMeta.rank})` : ''}
+                    </span>
+                    <span className={resolvedPlayerColor === 'b' ? 'player-col' : ''}>
+                      {row.black ? row.black.san : '-'}
+                      {row.blackMeta ? ` (#${row.blackMeta.rank})` : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p>No moves yet.</p>
+            )}
+          </section>
+        ) : null}
       </div>
     </div>
   );

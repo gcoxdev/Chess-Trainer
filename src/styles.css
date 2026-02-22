@@ -152,6 +152,18 @@ select:disabled {
   align-self: start;
 }
 
+.random-next-bar {
+  grid-area: captures;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #c8d7ef;
+  border-radius: 10px;
+  padding: 0.4rem 0.45rem;
+  width: 100%;
+  min-height: 0;
+  display: grid;
+  align-self: start;
+}
+
 .capture-group {
   min-height: 0;
   display: grid;
@@ -238,6 +250,29 @@ select:disabled {
   font-size: 0.68rem;
   line-height: 1;
   margin-top: 0;
+}
+
+.position-control-group {
+  grid-template-rows: auto 1fr;
+}
+
+.position-control-body {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 0.35rem;
+}
+
+.position-control-line {
+  font-size: 0.82rem;
+  color: #304458;
+  line-height: 1.2;
+}
+
+.random-next-button {
+  width: 100%;
+  min-height: 42px;
+  align-self: stretch;
 }
 
 .board-status {
@@ -371,6 +406,10 @@ h2 {
     gap: 0.28rem;
   }
 
+  .random-next-bar {
+    padding: 0.22rem 0.28rem;
+  }
+
   .capture-piece-glyph {
     height: 16px;
     font-size: 13px;
@@ -424,6 +463,12 @@ h2 {
     max-width: 100%;
     padding: 0.18rem 0.24rem;
     gap: 0.22rem;
+  }
+
+  .random-next-bar {
+    width: 100%;
+    max-width: 100%;
+    padding: 0.18rem 0.24rem;
   }
 
   .capture-group {
