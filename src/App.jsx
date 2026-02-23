@@ -35,6 +35,19 @@ function approximateEloForSkillLevel(level) {
   return Math.round(minElo + ((maxElo - minElo) * (level / 20)));
 }
 
+function formatPuzzleThemeLabel(theme) {
+  if (!theme) return '';
+  return String(theme)
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/([A-Za-z])(\d)/g, '$1 $2')
+    .replace(/(\d)([A-Za-z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
 function randomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
@@ -49,7 +62,7 @@ function loadScoreHistory() {
   try {
     const raw = window.localStorage.getItem(SCORE_HISTORY_STORAGE_KEY);
     if (!raw) {
-      return { classicBySkill: {}, randomByPhase: {} };
+      return { classicBySkill: {}, randomByPhase: {}, puzzleByTheme: {} };
     }
     const parsed = JSON.parse(raw);
     const classicBySkill = parsed?.classicBySkill && typeof parsed.classicBySkill === 'object'
@@ -57,6 +70,9 @@ function loadScoreHistory() {
       : {};
     const randomByPhase = parsed?.randomByPhase && typeof parsed.randomByPhase === 'object'
       ? parsed.randomByPhase
+      : {};
+    const puzzleByTheme = parsed?.puzzleByTheme && typeof parsed.puzzleByTheme === 'object'
+      ? parsed.puzzleByTheme
       : {};
 
     // Backward compatibility: older versions stored classic as a flat array.
@@ -71,10 +87,11 @@ function loadScoreHistory() {
 
     return {
       classicBySkill,
-      randomByPhase
+      randomByPhase,
+      puzzleByTheme
     };
   } catch {
-    return { classicBySkill: {}, randomByPhase: {} };
+    return { classicBySkill: {}, randomByPhase: {}, puzzleByTheme: {} };
   }
 }
 
@@ -396,6 +413,7 @@ export default function App() {
   const [topN, setTopN] = useState(3);
   const [gameMode, setGameMode] = useState('classic');
   const [randomFenPhase, setRandomFenPhase] = useState('random');
+  const [puzzleTheme, setPuzzleTheme] = useState('random');
   const [freeplayAnalyzeMoves, setFreeplayAnalyzeMoves] = useState(true);
   const [allowCommonOpenings, setAllowCommonOpenings] = useState(false);
   const [playerColor, setPlayerColor] = useState('w');
@@ -420,6 +438,13 @@ export default function App() {
   const [score, setScore] = useState({ earned: 0, possible: 0, errors: 0 });
   const [awaitingNextRandomFen, setAwaitingNextRandomFen] = useState(false);
   const [randomPositionsCompleted, setRandomPositionsCompleted] = useState(0);
+  const [puzzleManifest, setPuzzleManifest] = useState(null);
+  const [currentPuzzle, setCurrentPuzzle] = useState(null);
+  const [currentPuzzleMoveIndex, setCurrentPuzzleMoveIndex] = useState(0);
+  const [currentPuzzlePlayerMoveCount, setCurrentPuzzlePlayerMoveCount] = useState(0);
+  const [currentPuzzlePendingScore, setCurrentPuzzlePendingScore] = useState(0);
+  const [awaitingNextPuzzle, setAwaitingNextPuzzle] = useState(false);
+  const [puzzlesCompleted, setPuzzlesCompleted] = useState(0);
   const [currentSessionSaved, setCurrentSessionSaved] = useState(false);
   const [scoreHistory, setScoreHistory] = useState(() => loadScoreHistory());
   const [showScoreHistory, setShowScoreHistory] = useState(false);
@@ -428,6 +453,7 @@ export default function App() {
   const boardAreaRef = useRef(null);
   const boardStatusRef = useRef(null);
   const moveListRef = useRef(null);
+  const puzzlePoolCacheRef = useRef(new Map());
 
   const { ready, error, configure, evaluateTopMoves } = useStockfish();
 
@@ -478,6 +504,7 @@ export default function App() {
   const playerTurn = game.turn() === activePlayerColor;
   const engineColor = activePlayerColor === 'w' ? 'b' : 'w';
   const randomFenMode = gameMode === 'random-fen';
+  const puzzleMode = gameMode === 'puzzle';
   const freeplayMode = gameMode === 'freeplay';
   const settingsLocked = isGameStarted;
   const resolvedPlayerColor = freeplayMode
@@ -489,7 +516,7 @@ export default function App() {
   const engineThinking = isGameStarted
     && !game.isGameOver()
     && isProcessing
-    && (randomFenMode || freeplayMode || game.turn() === engineColor);
+    && (randomFenMode || puzzleMode || freeplayMode || game.turn() === engineColor);
   const boardOrientation = useMemo(() => {
     if (autoFlipBoard && isGameStarted) {
       return game.turn() === 'w' ? 'white' : 'black';
@@ -504,7 +531,7 @@ export default function App() {
     if (game.isGameOver()) {
       return 'Game over';
     }
-    if (freeplayMode) {
+    if (freeplayMode || puzzleMode) {
       return `${turnLabel} to move`;
     }
     if (playerTurn) {
@@ -514,7 +541,7 @@ export default function App() {
       return `${turnLabel} to move`;
     }
     return `${turnLabel} to move (Engine)`;
-  }, [isGameStarted, game, playerTurn, turnLabel, randomFenMode, freeplayMode]);
+  }, [isGameStarted, game, playerTurn, turnLabel, randomFenMode, freeplayMode, puzzleMode]);
   const scorePercent = useMemo(() => {
     if (!score.possible) {
       return 0;
@@ -540,6 +567,11 @@ export default function App() {
     [scoreHistory, randomFenPhase]
   );
 
+  const puzzleHistoryForSelectedTheme = useMemo(
+    () => scoreHistory.puzzleByTheme?.[String(puzzleTheme)] ?? [],
+    [scoreHistory, puzzleTheme]
+  );
+
   const bestClassicScore = useMemo(() => {
     if (!classicHistoryForSelectedSkill.length) {
       return null;
@@ -563,14 +595,38 @@ export default function App() {
     })[0];
   }, [randomHistoryForSelectedPhase]);
 
+  const bestPuzzleSession = useMemo(() => {
+    if (!puzzleHistoryForSelectedTheme.length) {
+      return null;
+    }
+    return [...puzzleHistoryForSelectedTheme].sort((a, b) => {
+      if (b.possible !== a.possible) return b.possible - a.possible;
+      if (b.percent !== a.percent) return b.percent - a.percent;
+      if (b.puzzles !== a.puzzles) return b.puzzles - a.puzzles;
+      if (b.possible !== a.possible) return b.possible - a.possible;
+      return b.earned - a.earned;
+    })[0];
+  }, [puzzleHistoryForSelectedTheme]);
+
   const activeScoreHistory = useMemo(
-    () => (randomFenMode ? randomHistoryForSelectedPhase : classicHistoryForSelectedSkill),
-    [randomFenMode, randomHistoryForSelectedPhase, classicHistoryForSelectedSkill]
+    () => (puzzleMode
+      ? puzzleHistoryForSelectedTheme
+      : (randomFenMode ? randomHistoryForSelectedPhase : classicHistoryForSelectedSkill)),
+    [puzzleMode, puzzleHistoryForSelectedTheme, randomFenMode, randomHistoryForSelectedPhase, classicHistoryForSelectedSkill]
   );
 
   useEffect(() => {
     setShowScoreHistory(false);
   }, [gameMode]);
+
+  useEffect(() => {
+    if (!puzzleMode || puzzleManifest) {
+      return;
+    }
+    void ensurePuzzleManifest().catch(() => {
+      // surfaced when mode starts/loads puzzle
+    });
+  }, [puzzleMode, puzzleManifest]);
 
   const playerMetaByPly = useMemo(() => {
     const map = new Map();
@@ -625,7 +681,7 @@ export default function App() {
   }, [moveHistory]);
 
   const currentOpening = useMemo(() => {
-    if (randomFenMode || !moveHistory.length) {
+    if (randomFenMode || puzzleMode || !moveHistory.length) {
       return null;
     }
 
@@ -638,7 +694,18 @@ export default function App() {
     }
 
     return null;
-  }, [randomFenMode, moveHistory]);
+  }, [randomFenMode, puzzleMode, moveHistory]);
+
+  const puzzleThemeDisplay = useMemo(() => {
+    if (!puzzleMode) {
+      return '';
+    }
+    if (puzzleTheme !== 'random') {
+      return formatPuzzleThemeLabel(puzzleTheme);
+    }
+    const actualTheme = currentPuzzle?.themes?.[0];
+    return actualTheme ? `Random (${formatPuzzleThemeLabel(actualTheme)})` : 'Random';
+  }, [puzzleMode, puzzleTheme, currentPuzzle]);
 
   const chessboardTheme = useMemo(() => BOARD_THEMES[boardStyle] || BOARD_THEMES.classic, [boardStyle]);
 
@@ -1177,6 +1244,26 @@ export default function App() {
         }
       }));
     }
+    if (isGameStarted && puzzleMode && !currentSessionSaved && (score.possible > 0 || puzzlesCompleted > 0)) {
+      const percent = score.possible ? (Math.max(0, score.earned) / score.possible) * 100 : 0;
+      setScoreHistory((prev) => ({
+        ...prev,
+        puzzleByTheme: {
+          ...(prev.puzzleByTheme || {}),
+          [String(puzzleTheme)]: [
+            {
+              earned: score.earned,
+              possible: score.possible,
+              percent,
+              puzzles: puzzlesCompleted,
+              timestamp: Date.now(),
+              theme: puzzleTheme
+            },
+            ...((prev.puzzleByTheme?.[String(puzzleTheme)] ?? []))
+          ].slice(0, 100)
+        }
+      }));
+    }
 
     setGame(new Chess());
     setIsGameStarted(false);
@@ -1194,18 +1281,25 @@ export default function App() {
     setActivePlayerColor('w');
     setManualBoardOrientation('white');
     setAwaitingNextRandomFen(false);
+    setAwaitingNextPuzzle(false);
+    setCurrentPuzzle(null);
+    setCurrentPuzzleMoveIndex(0);
+    setCurrentPuzzlePlayerMoveCount(0);
+    setCurrentPuzzlePendingScore(0);
     setRandomPositionsCompleted(0);
+    setPuzzlesCompleted(0);
     setCurrentSessionSaved(false);
   };
 
   const finishGame = (board, scoreSnapshot = score) => {
-    if (freeplayMode) {
-      setStatus(board.isGameOver() ? 'Game over.' : 'Freeplay ended.');
+    if (freeplayMode || puzzleMode) {
+      setStatus(board.isGameOver() ? 'Game over.' : (puzzleMode ? 'Puzzle mode ended.' : 'Freeplay ended.'));
       setCurrentTopMoves([]);
       setIsProcessing(false);
       setSelectedSquare('');
       setDragSourceSquare('');
       setAwaitingNextRandomFen(false);
+      setAwaitingNextPuzzle(false);
       return;
     }
 
@@ -1247,6 +1341,96 @@ export default function App() {
     return topMoves;
   };
 
+  const ensurePuzzleManifest = async () => {
+    if (puzzleManifest) {
+      return puzzleManifest;
+    }
+    const res = await fetch('/puzzles/manifest.json');
+    if (!res.ok) {
+      throw new Error('Puzzle pack not found. Run the puzzle pack build step first.');
+    }
+    const manifest = await res.json();
+    setPuzzleManifest(manifest);
+    return manifest;
+  };
+
+  const loadPuzzlePool = async (themeKey) => {
+    const cacheKey = themeKey || 'random';
+    const cached = puzzlePoolCacheRef.current.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const manifest = await ensurePuzzleManifest();
+    let path = manifest.randomFile;
+    if (cacheKey !== 'random') {
+      const match = manifest.themes?.find((t) => t.theme === cacheKey || t.slug === cacheKey);
+      if (!match) {
+        throw new Error(`Puzzle theme not found: ${cacheKey}`);
+      }
+      path = match.file;
+    }
+
+    const res = await fetch(`/puzzles/${path}`);
+    if (!res.ok) {
+      throw new Error('Failed to load puzzle data.');
+    }
+    const pool = await res.json();
+    puzzlePoolCacheRef.current.set(cacheKey, pool);
+    return pool;
+  };
+
+  const loadPuzzlePosition = async (statusMessage) => {
+    const pool = await loadPuzzlePool(puzzleTheme);
+    if (!Array.isArray(pool) || !pool.length) {
+      throw new Error('No puzzles available for the selected theme.');
+    }
+
+    const puzzle = pool[randomInt(0, pool.length - 1)];
+    const board = new Chess(puzzle.fen);
+    const puzzleMoves = Array.isArray(puzzle.moves) ? puzzle.moves : [];
+    let startIndex = 0;
+    let seedMove = null;
+
+    // Lichess puzzle CSV lines typically include the pre-played move first.
+    // Apply it so the player starts on the tactical side.
+    if (puzzleMoves.length) {
+      const first = puzzleMoves[0];
+      const applied = board.move({
+        from: first.slice(0, 2),
+        to: first.slice(2, 4),
+        promotion: first[4]
+      });
+      if (applied) {
+        seedMove = applied;
+        startIndex = 1;
+      }
+    }
+
+    const playerMoveCount = puzzleMoves.reduce((count, _, idx) => (
+      idx >= startIndex && ((idx - startIndex) % 2 === 0) ? count + 1 : count
+    ), 0);
+    const puzzleSide = board.turn();
+
+    setCurrentPuzzle(puzzle);
+    setCurrentPuzzleMoveIndex(startIndex);
+    setCurrentPuzzlePlayerMoveCount(playerMoveCount);
+    setCurrentPuzzlePendingScore(0);
+    setAwaitingNextPuzzle(false);
+    setGame(new Chess(board.fen()));
+    setActivePlayerColor(puzzleSide);
+    setManualBoardOrientation(puzzleSide === 'w' ? 'white' : 'black');
+    setMoveHistory(seedMove ? [seedMove] : []);
+    setPlayerMoveMeta([]);
+    setCurrentTopMoves([]);
+    setLastEvaluatedMoves([]);
+    setShowLastEvaluated(false);
+    setSelectedSquare('');
+    setDragSourceSquare('');
+    setErrorSquareStyles({});
+    setStatus(statusMessage || `Puzzle loaded${puzzleTheme !== 'random' ? ` (${puzzleTheme})` : ''}.`);
+  };
+
   const loadRandomFenPosition = async (playerSide, statusMessage) => {
     const board = generateRandomTrainingBoard({
       playerColor: playerSide,
@@ -1278,6 +1462,21 @@ export default function App() {
       await loadRandomFenPosition(activePlayerColor, 'New random position loaded.');
     } catch (e) {
       setStatus(e.message || 'Engine error while loading random position.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const nextPuzzlePosition = async () => {
+    if (!isGameStarted || !puzzleMode || isProcessing || !awaitingNextPuzzle) {
+      return;
+    }
+
+    setIsProcessing(true);
+    try {
+      await loadPuzzlePosition('New puzzle loaded.');
+    } catch (e) {
+      setStatus(e.message || 'Error loading next puzzle.');
     } finally {
       setIsProcessing(false);
     }
@@ -1352,6 +1551,13 @@ export default function App() {
         return;
       }
 
+      if (puzzleMode) {
+        await ensurePuzzleManifest();
+        await loadPuzzlePosition('Puzzle mode started.');
+        setIsProcessing(false);
+        return;
+      }
+
       if (freeplayMode) {
         if (freeplayAnalyzeMoves) {
           await preloadTopMoves(board.fen(), topN);
@@ -1409,6 +1615,11 @@ export default function App() {
       return false;
     }
 
+    if (puzzleMode && awaitingNextPuzzle) {
+      setStatus('Click Next Puzzle to continue.');
+      return false;
+    }
+
     if (game.isGameOver()) {
       setStatus('Game is over. Start a new game.');
       return false;
@@ -1419,7 +1630,7 @@ export default function App() {
       return false;
     }
 
-    if ((!freeplayMode || freeplayAnalyzeMoves) && !currentTopMoves.length) {
+    if ((!freeplayMode || freeplayAnalyzeMoves) && !puzzleMode && !currentTopMoves.length) {
       setStatus('Analyzing position...');
       return false;
     }
@@ -1450,6 +1661,91 @@ export default function App() {
     const moveUci = toMoveString(humanMove);
     const rank = (freeplayMode && !freeplayAnalyzeMoves) ? 0 : (currentTopMoves.indexOf(moveUci) + 1);
     const ply = moveHistory.length + 1;
+
+    if (puzzleMode) {
+      const expectedMove = currentPuzzle?.moves?.[currentPuzzleMoveIndex];
+      if (!expectedMove) {
+        setStatus('Puzzle sequence is unavailable. Load another puzzle.');
+        return false;
+      }
+
+      if (moveUci !== expectedMove) {
+        setStatus('Incorrect puzzle move.');
+        setSelectedSquare('');
+        setDragSourceSquare('');
+        flashInvalidMoveSquares(sourceSquare, targetSquare);
+        setCurrentPuzzlePendingScore((prev) => prev - 1);
+        setScore((prev) => ({ ...prev, errors: prev.errors + 1 }));
+        return false;
+      }
+
+      setGame(testGame);
+      setMoveHistory((prev) => [...prev, humanMove]);
+      setSelectedSquare('');
+      setDragSourceSquare('');
+      setPlayerMoveMeta((prev) => [
+        ...prev,
+        {
+          ply,
+          san: humanMove.san,
+          rank: 1,
+          label: 'Puzzle Move',
+          points: 1
+        }
+      ]);
+      setCurrentPuzzlePendingScore((prev) => prev + 1);
+
+      const nextIndex = currentPuzzleMoveIndex + 1;
+      const totalMoves = currentPuzzle?.moves?.length ?? 0;
+
+      if (nextIndex >= totalMoves || testGame.isGameOver()) {
+        setCurrentPuzzleMoveIndex(nextIndex);
+        setScore((prev) => ({
+          ...prev,
+          earned: prev.earned + (currentPuzzlePendingScore + 1),
+          possible: prev.possible + currentPuzzlePlayerMoveCount
+        }));
+        setCurrentPuzzlePendingScore(0);
+        setAwaitingNextPuzzle(true);
+        setPuzzlesCompleted((prev) => prev + 1);
+        setStatus('Puzzle solved. Click Next Puzzle.');
+        return true;
+      }
+
+      const opponentMoveUci = currentPuzzle.moves[nextIndex];
+      const opponentMove = testGame.move({
+        from: opponentMoveUci.slice(0, 2),
+        to: opponentMoveUci.slice(2, 4),
+        promotion: opponentMoveUci[4]
+      });
+
+      if (!opponentMove) {
+        setCurrentPuzzleMoveIndex(nextIndex);
+        setStatus('Puzzle sequence error. Load another puzzle.');
+        return true;
+      }
+
+      setGame(new Chess(testGame.fen()));
+      setMoveHistory((prev) => [...prev, opponentMove]);
+      setCurrentPuzzleMoveIndex(nextIndex + 1);
+
+      if (nextIndex + 1 >= totalMoves || testGame.isGameOver()) {
+        setScore((prev) => ({
+          ...prev,
+          earned: prev.earned + (currentPuzzlePendingScore + 1),
+          possible: prev.possible + currentPuzzlePlayerMoveCount
+        }));
+        setCurrentPuzzlePendingScore(0);
+        setAwaitingNextPuzzle(true);
+        setPuzzlesCompleted((prev) => prev + 1);
+        setStatus('Puzzle solved. Click Next Puzzle.');
+        return true;
+      }
+
+      const remaining = totalMoves - (nextIndex + 1);
+      setStatus(`Correct puzzle move. Opponent replied ${opponentMove.san}. ${remaining} move${remaining === 1 ? '' : 's'} remaining.`);
+      return true;
+    }
 
     if (freeplayMode) {
       const earnedPoints = rank ? pointsForRank(rank, topN) : 0;
@@ -1617,9 +1913,11 @@ export default function App() {
   };
 
   const clearActiveScoreHistory = () => {
-    const confirmMessage = randomFenMode
-      ? 'Clear all Random Position score history and top score?'
-      : `Clear Classic score history and top score for Skill Level ${engineSkillLevel}?`;
+    const confirmMessage = puzzleMode
+      ? `Clear Puzzle score history and top score for theme ${puzzleTheme}?`
+      : randomFenMode
+        ? 'Clear all Random Position score history and top score?'
+        : `Clear Classic score history and top score for Skill Level ${engineSkillLevel}?`;
 
     if (!window.confirm(confirmMessage)) {
       return;
@@ -1632,12 +1930,24 @@ export default function App() {
         return { ...prev, randomByPhase: nextRandomByPhase };
       }
 
+      if (puzzleMode) {
+        const nextPuzzleByTheme = { ...(prev.puzzleByTheme || {}) };
+        delete nextPuzzleByTheme[String(puzzleTheme)];
+        return { ...prev, puzzleByTheme: nextPuzzleByTheme };
+      }
+
       const nextClassicBySkill = { ...(prev.classicBySkill || {}) };
       delete nextClassicBySkill[String(engineSkillLevel)];
       return { ...prev, classicBySkill: nextClassicBySkill };
     });
     setShowScoreHistory(false);
-    setStatus(randomFenMode ? 'Random score history cleared.' : `Classic history cleared for skill level ${engineSkillLevel}.`);
+    setStatus(
+      puzzleMode
+        ? `Puzzle history cleared for theme ${puzzleTheme}.`
+        : randomFenMode
+          ? 'Random score history cleared.'
+          : `Classic history cleared for skill level ${engineSkillLevel}.`
+    );
   };
 
   const onPieceDragBegin = (...args) => {
@@ -1658,6 +1968,10 @@ export default function App() {
   const onSquareClick = (square) => {
     if (randomFenMode && awaitingNextRandomFen) {
       setStatus('Click Next Position to continue.');
+      return;
+    }
+    if (puzzleMode && awaitingNextPuzzle) {
+      setStatus('Click Next Puzzle to continue.');
       return;
     }
 
@@ -1758,7 +2072,7 @@ export default function App() {
             customPieces={customPieces}
             boardWidth={boardWidth}
             boardOrientation={boardOrientation}
-            arePiecesDraggable={isGameStarted && !isProcessing && !game.isGameOver() && (freeplayMode || playerTurn)}
+            arePiecesDraggable={isGameStarted && !isProcessing && !game.isGameOver() && (freeplayMode || puzzleMode || playerTurn)}
           />
         </div>
       </main>
@@ -1772,6 +2086,17 @@ export default function App() {
             disabled={!isGameStarted || isProcessing || !awaitingNextRandomFen}
           >
             Next Position
+          </button>
+        </div>
+      ) : puzzleMode ? (
+        <div className="random-next-bar" aria-label="Puzzle controls">
+          <button
+            type="button"
+            className="random-next-button"
+            onClick={nextPuzzlePosition}
+            disabled={!isGameStarted || isProcessing || !awaitingNextPuzzle}
+          >
+            Next Puzzle
           </button>
         </div>
       ) : (
@@ -1813,6 +2138,7 @@ export default function App() {
               <select value={gameMode} disabled={settingsLocked} onChange={(e) => setGameMode(e.target.value)}>
                 <option value="classic">Classic</option>
                 <option value="random-fen">Random Position</option>
+                <option value="puzzle">Puzzle</option>
                 <option value="freeplay">Freeplay</option>
               </select>
             </label>
@@ -1831,12 +2157,26 @@ export default function App() {
                   <option value="endgame">Endgame</option>
                 </select>
               </label>
+            ) : puzzleMode ? (
+              <label>
+                Puzzle Theme
+                <select
+                  value={puzzleTheme}
+                  disabled={settingsLocked}
+                  onChange={(e) => setPuzzleTheme(e.target.value)}
+                >
+                  <option value="random">Random</option>
+                  {(puzzleManifest?.themes || []).map((t) => (
+                    <option key={t.slug} value={t.theme}>{`${formatPuzzleThemeLabel(t.theme)} (${t.count.toLocaleString()})`}</option>
+                  ))}
+                </select>
+              </label>
             ) : (
               <label>
                 Skill Level
                 <select
                   value={engineSkillLevel}
-                  disabled={settingsLocked || freeplayMode}
+                  disabled={settingsLocked || freeplayMode || puzzleMode}
                   onChange={(e) => setEngineSkillLevel(clamp(Number(e.target.value || 5), 0, 20))}
                 >
                   {Array.from({ length: 21 }, (_, i) => (
@@ -1848,19 +2188,21 @@ export default function App() {
               </label>
             )}
 
-            <label>
-              Top N
-              <input
-                type="number"
-                min={1}
-                max={10}
-                value={topN}
-                disabled={settingsLocked}
-                onChange={(e) => setTopN(clamp(Number(e.target.value || 3), 1, 10))}
-              />
-            </label>
+            {!puzzleMode ? (
+              <label>
+                Top N
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={topN}
+                  disabled={settingsLocked}
+                  onChange={(e) => setTopN(clamp(Number(e.target.value || 3), 1, 10))}
+                />
+              </label>
+            ) : null}
 
-            {!randomFenMode && !freeplayMode ? (
+            {!randomFenMode && !freeplayMode && !puzzleMode ? (
               <label>
                 Allow Common Openings
                 <input
@@ -1884,14 +2226,16 @@ export default function App() {
               </label>
             ) : null}
 
-            <label>
-              Play As
-              <select value={playerColor} disabled={settingsLocked} onChange={(e) => setPlayerColor(e.target.value)}>
-                <option value="w">White</option>
-                <option value="b">Black</option>
-                <option value="random">Random</option>
-              </select>
-            </label>
+            {!puzzleMode ? (
+              <label>
+                Play As
+                <select value={playerColor} disabled={settingsLocked} onChange={(e) => setPlayerColor(e.target.value)}>
+                  <option value="w">White</option>
+                  <option value="b">Black</option>
+                  <option value="random">Random</option>
+                </select>
+              </label>
+            ) : null}
 
             <label>
               Board Style
@@ -1943,12 +2287,14 @@ export default function App() {
           <p><strong>Update:</strong> {status}</p>
           {!freeplayMode ? <p><strong>Current:</strong> {score.earned} / {score.possible} ({scorePercent}%)</p> : null}
           {!freeplayMode ? <p><strong>Mistakes:</strong> {score.errors}</p> : null}
-          {!randomFenMode ? (
+          {!randomFenMode && !puzzleMode ? (
             <p><strong>Opening:</strong> {currentOpening?.label || '-'}</p>
           ) : null}
           {randomFenMode ? <p><strong>Positions:</strong> {randomPositionsCompleted}</p> : null}
+          {puzzleMode ? <p><strong>Puzzles:</strong> {puzzlesCompleted}</p> : null}
+          {puzzleMode ? <p><strong>Theme:</strong> {puzzleThemeDisplay}</p> : null}
           {freeplayMode ? <p><strong>Move Analysis:</strong> {freeplayAnalyzeMoves ? `Top ${topN} enabled` : 'Off'}</p> : null}
-          {!randomFenMode && !freeplayMode ? (
+          {!randomFenMode && !freeplayMode && !puzzleMode ? (
             bestClassicScore ? (
               <p>
                 <strong>Best Classic:</strong>{' '}
@@ -1967,6 +2313,16 @@ export default function App() {
             ) : (
               <p><strong>Best Random:</strong> -</p>
             )
+          ) : puzzleMode ? (
+            bestPuzzleSession ? (
+              <p>
+                <strong>Best Puzzle:</strong>{' '}
+                {bestPuzzleSession.puzzles} puzzles, {Math.max(0, bestPuzzleSession.earned)} / {bestPuzzleSession.possible} ({bestPuzzleSession.percent.toFixed(1)}%)
+                {` [${formatPuzzleThemeLabel(puzzleTheme)}]`}
+              </p>
+            ) : (
+              <p><strong>Best Puzzle:</strong> -</p>
+            )
           ) : null}
           {!freeplayMode ? (
             <button
@@ -1982,7 +2338,9 @@ export default function App() {
               <div className="history-list">
                 <div className="history-list-head">
                   <span className="history-list-title">
-                    {randomFenMode
+                    {puzzleMode
+                      ? `Puzzle History (${formatPuzzleThemeLabel(puzzleTheme)})`
+                      : randomFenMode
                       ? `Random History (${randomFenPhase === 'random' ? 'Random' : randomFenPhase})`
                       : `Classic History (Level ${engineSkillLevel})`}
                   </span>
@@ -1990,8 +2348,10 @@ export default function App() {
                     type="button"
                     className="history-clear-button"
                     onClick={clearActiveScoreHistory}
-                    title={randomFenMode ? 'Clear Random History' : `Clear Classic History (Level ${engineSkillLevel})`}
-                    aria-label={randomFenMode
+                    title={puzzleMode ? `Clear Puzzle History (${formatPuzzleThemeLabel(puzzleTheme)})` : randomFenMode ? 'Clear Random History' : `Clear Classic History (Level ${engineSkillLevel})`}
+                    aria-label={puzzleMode
+                      ? `Clear Puzzle History for theme ${formatPuzzleThemeLabel(puzzleTheme)}`
+                      : randomFenMode
                       ? `Clear Random History for ${randomFenPhase === 'random' ? 'Random' : randomFenPhase} phase`
                       : `Clear Classic History for Skill Level ${engineSkillLevel}`}
                   >
@@ -2002,7 +2362,9 @@ export default function App() {
                   <div className="history-row" key={`${entry.timestamp}-${index}`}>
                     <span className="history-rank">#{index + 1}</span>
                     <span className="history-main">
-                      {randomFenMode
+                      {puzzleMode
+                        ? `${entry.puzzles} puz, ${Math.max(0, entry.earned)}/${entry.possible} (${entry.percent.toFixed(1)}%)`
+                        : randomFenMode
                         ? `${entry.positions} pos, ${Math.max(0, entry.earned)}/${entry.possible} (${entry.percent.toFixed(1)}%)`
                         : `${Math.max(0, entry.earned)}/${entry.possible} (${entry.percent.toFixed(1)}%)`}
                     </span>
@@ -2014,7 +2376,9 @@ export default function App() {
               <div className="history-list">
                 <div className="history-list-head">
                   <span className="history-list-title">
-                    {randomFenMode
+                    {puzzleMode
+                      ? `Puzzle History (${formatPuzzleThemeLabel(puzzleTheme)})`
+                      : randomFenMode
                       ? `Random History (${randomFenPhase === 'random' ? 'Random' : randomFenPhase})`
                       : `Classic History (Level ${engineSkillLevel})`}
                   </span>
