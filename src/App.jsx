@@ -26,7 +26,17 @@ function rankLabel(rank) {
 }
 
 function pointsForRank(rank, topN) {
-  return Math.max(1, topN - rank + 1);
+  return (Math.max(1, topN - rank + 1)) / Math.max(1, topN);
+}
+
+function penaltyForMiss(topN) {
+  return 1 / Math.max(1, topN);
+}
+
+function formatScoreValue(value) {
+  const n = Number(value || 0);
+  if (Number.isInteger(n)) return String(n);
+  return n.toFixed(2).replace(/\.?0+$/, '');
 }
 
 function approximateEloForSkillLevel(level) {
@@ -448,6 +458,11 @@ export default function App() {
   const [currentSessionSaved, setCurrentSessionSaved] = useState(false);
   const [scoreHistory, setScoreHistory] = useState(() => loadScoreHistory());
   const [showScoreHistory, setShowScoreHistory] = useState(false);
+  const [collapsedPanels, setCollapsedPanels] = useState({
+    settings: false,
+    score: false,
+    moves: false
+  });
 
   const boardWrapRef = useRef(null);
   const boardAreaRef = useRef(null);
@@ -456,6 +471,10 @@ export default function App() {
   const puzzlePoolCacheRef = useRef(new Map());
 
   const { ready, error, configure, evaluateTopMoves } = useStockfish();
+
+  const togglePanel = (panelKey) => {
+    setCollapsedPanels((prev) => ({ ...prev, [panelKey]: !prev[panelKey] }));
+  };
 
   useEffect(() => {
     if (!ready) {
@@ -614,6 +633,17 @@ export default function App() {
       : (randomFenMode ? randomHistoryForSelectedPhase : classicHistoryForSelectedSkill)),
     [puzzleMode, puzzleHistoryForSelectedTheme, randomFenMode, randomHistoryForSelectedPhase, classicHistoryForSelectedSkill]
   );
+
+  const displayedScoreHistory = useMemo(() => {
+    const rows = [...activeScoreHistory];
+    if (puzzleMode) {
+      return rows;
+    }
+    return rows.sort((a, b) => {
+      if (b.percent !== a.percent) return b.percent - a.percent;
+      return (b.timestamp || 0) - (a.timestamp || 0);
+    });
+  }, [activeScoreHistory, puzzleMode]);
 
   useEffect(() => {
     setShowScoreHistory(false);
@@ -1236,6 +1266,7 @@ export default function App() {
               possible: score.possible,
               percent,
               positions: randomPositionsCompleted,
+              topN,
               timestamp: Date.now(),
               phase: randomFenPhase
             },
@@ -1307,7 +1338,7 @@ export default function App() {
       ? (Math.max(0, scoreSnapshot.earned) / scoreSnapshot.possible) * 100
       : 0;
     const percent = percentValue.toFixed(1);
-    setStatus(`Final score: ${Math.max(0, scoreSnapshot.earned)}/${scoreSnapshot.possible} (${percent}%).`);
+    setStatus(`Final score: ${formatScoreValue(Math.max(0, scoreSnapshot.earned))}/${formatScoreValue(scoreSnapshot.possible)} (${percent}%).`);
     setCurrentTopMoves([]);
     setIsProcessing(false);
     setSelectedSquare('');
@@ -1324,6 +1355,7 @@ export default function App() {
               earned: scoreSnapshot.earned,
               possible: scoreSnapshot.possible,
               percent: percentValue,
+              topN,
               timestamp: Date.now(),
               skillLevel: engineSkillLevel
             },
@@ -1775,7 +1807,7 @@ export default function App() {
       const moveStatus = !freeplayAnalyzeMoves
         ? 'Freeplay move accepted.'
         : rank
-          ? `${rankText}. +${earnedPoints} move score.`
+          ? `${rankText}. +${formatScoreValue(earnedPoints)} move score.`
           : `Outside top ${topN}. Freeplay move accepted.`;
 
       if (testGame.isGameOver()) {
@@ -1845,7 +1877,7 @@ export default function App() {
       setSelectedSquare('');
       setDragSourceSquare('');
       flashInvalidMoveSquares(sourceSquare, targetSquare);
-      setScore((prev) => ({ ...prev, earned: prev.earned - 1, errors: prev.errors + 1 }));
+      setScore((prev) => ({ ...prev, earned: prev.earned - penaltyForMiss(topN), errors: prev.errors + 1 }));
       return false;
     }
 
@@ -1854,13 +1886,13 @@ export default function App() {
 
     const projectedScore = {
       earned: score.earned + earnedPoints,
-      possible: score.possible + topN,
+      possible: score.possible + 1,
       errors: score.errors
     };
 
     setScore((prev) => ({
       earned: prev.earned + earnedPoints,
-      possible: prev.possible + topN,
+      possible: prev.possible + 1,
       errors: prev.errors
     }));
 
@@ -1889,17 +1921,17 @@ export default function App() {
     }
 
     setIsProcessing(true);
-    setStatus(`${rankText}. +${earnedPoints} points.`);
+    setStatus(`${rankText}. +${formatScoreValue(earnedPoints)} points.`);
 
     if (randomFenMode) {
       setRandomPositionsCompleted((prev) => prev + 1);
       setAwaitingNextRandomFen(true);
       setIsProcessing(false);
-      setStatus(`${rankText}. +${earnedPoints} points. Click Next Position.`);
+      setStatus(`${rankText}. +${formatScoreValue(earnedPoints)} points. Click Next Position.`);
       return true;
     }
 
-    void applyEngineReply(testGame, `${rankText}. +${earnedPoints} points`);
+    void applyEngineReply(testGame, `${rankText}. +${formatScoreValue(earnedPoints)} points`);
     return true;
   };
 
@@ -2129,9 +2161,21 @@ export default function App() {
       )}
 
       <div className="left-column">
-        <header className="panel">
-          <h2 className="panel-title">Settings</h2>
+        <header className={`panel${collapsedPanels.settings ? ' is-collapsed' : ''}`}>
+          <div className="panel-head">
+            <h2 className="panel-title">Settings</h2>
+            <button
+              type="button"
+              className="panel-toggle"
+              onClick={() => togglePanel('settings')}
+              aria-expanded={!collapsedPanels.settings}
+              aria-label={collapsedPanels.settings ? 'Expand Settings' : 'Collapse Settings'}
+            >
+              {collapsedPanels.settings ? 'Show' : 'Hide'}
+            </button>
+          </div>
 
+          {!collapsedPanels.settings ? (
           <div className="controls">
             <label>
               Game Mode
@@ -2280,12 +2324,26 @@ export default function App() {
               <button className="danger-button" onClick={resetToSetup} type="button">End Game</button>
             )}
           </div>
+          ) : null}
         </header>
 
-        <section className="panel">
-          <h2 className="panel-title">Score</h2>
+        <section className={`panel${collapsedPanels.score ? ' is-collapsed' : ''}`}>
+          <div className="panel-head">
+            <h2 className="panel-title">Score</h2>
+            <button
+              type="button"
+              className="panel-toggle"
+              onClick={() => togglePanel('score')}
+              aria-expanded={!collapsedPanels.score}
+              aria-label={collapsedPanels.score ? 'Expand Score' : 'Collapse Score'}
+            >
+              {collapsedPanels.score ? 'Show' : 'Hide'}
+            </button>
+          </div>
+          {!collapsedPanels.score ? (
+          <>
           <p><strong>Update:</strong> {status}</p>
-          {!freeplayMode ? <p><strong>Current:</strong> {score.earned} / {score.possible} ({scorePercent}%)</p> : null}
+          {!freeplayMode ? <p><strong>Current:</strong> {formatScoreValue(score.earned)} / {formatScoreValue(score.possible)} ({scorePercent}%)</p> : null}
           {!freeplayMode ? <p><strong>Mistakes:</strong> {score.errors}</p> : null}
           {!randomFenMode && !puzzleMode ? (
             <p><strong>Opening:</strong> {currentOpening?.label || '-'}</p>
@@ -2298,7 +2356,8 @@ export default function App() {
             bestClassicScore ? (
               <p>
                 <strong>Best Classic:</strong>{' '}
-                {Math.max(0, bestClassicScore.earned)} / {bestClassicScore.possible} ({bestClassicScore.percent.toFixed(1)}%)
+                {formatScoreValue(Math.max(0, bestClassicScore.earned))} / {formatScoreValue(bestClassicScore.possible)} ({bestClassicScore.percent.toFixed(1)}%)
+                {bestClassicScore.topN ? ` [Top ${bestClassicScore.topN}]` : ''}
               </p>
             ) : (
               <p><strong>Best Classic:</strong> -</p>
@@ -2307,7 +2366,8 @@ export default function App() {
             bestRandomSession ? (
               <p>
                 <strong>Best Random:</strong>{' '}
-                {bestRandomSession.positions} positions, {Math.max(0, bestRandomSession.earned)} / {bestRandomSession.possible} ({bestRandomSession.percent.toFixed(1)}%)
+                {bestRandomSession.positions} positions, {formatScoreValue(Math.max(0, bestRandomSession.earned))} / {formatScoreValue(bestRandomSession.possible)} ({bestRandomSession.percent.toFixed(1)}%)
+                {bestRandomSession.topN ? `, Top ${bestRandomSession.topN}` : ''}
                 {` [${randomFenPhase === 'random' ? 'Random' : randomFenPhase}]`}
               </p>
             ) : (
@@ -2358,15 +2418,20 @@ export default function App() {
                     🗑
                   </button>
                 </div>
-                {activeScoreHistory.slice(0, 20).map((entry, index) => (
+                <div className="history-row history-columns" aria-hidden="true">
+                  <span className="history-rank">#</span>
+                  <span className="history-main">Score</span>
+                  <span className="history-time">Date</span>
+                </div>
+                {displayedScoreHistory.slice(0, 20).map((entry, index) => (
                   <div className="history-row" key={`${entry.timestamp}-${index}`}>
                     <span className="history-rank">#{index + 1}</span>
                     <span className="history-main">
                       {puzzleMode
                         ? `${entry.puzzles} puz, ${Math.max(0, entry.earned)}/${entry.possible} (${entry.percent.toFixed(1)}%)`
                         : randomFenMode
-                        ? `${entry.positions} pos, ${Math.max(0, entry.earned)}/${entry.possible} (${entry.percent.toFixed(1)}%)`
-                        : `${Math.max(0, entry.earned)}/${entry.possible} (${entry.percent.toFixed(1)}%)`}
+                        ? `${entry.positions} pos, ${formatScoreValue(Math.max(0, entry.earned))}/${formatScoreValue(entry.possible)} (${entry.percent.toFixed(1)}%)${entry.topN ? `, Top ${entry.topN}` : ''}`
+                        : `${formatScoreValue(Math.max(0, entry.earned))}/${formatScoreValue(entry.possible)} (${entry.percent.toFixed(1)}%)${entry.topN ? `, Top ${entry.topN}` : ''}`}
                     </span>
                     <span className="history-time">{formatHistoryTimestamp(entry.timestamp)}</span>
                   </div>
@@ -2404,34 +2469,51 @@ export default function App() {
           ) : null}
 
           {error ? <p className="error">{error}</p> : null}
+          </>
+          ) : null}
         </section>
 
-        <section className="panel">
-          <h2 className="panel-title">Move List</h2>
-          {moveRows.length ? (
-            <div className="move-list" ref={moveListRef}>
-              <div className="move-row move-head">
-                <span className="move-num">#</span>
-                <span className={resolvedPlayerColor === 'w' ? 'player-col' : ''}>{whiteHeaderLabel}</span>
-                <span className={resolvedPlayerColor === 'b' ? 'player-col' : ''}>{blackHeaderLabel}</span>
-              </div>
-              {moveRows.map((row) => (
-                <div className="move-row" key={row.moveNumber}>
-                  <span className="move-num">{row.moveNumber}.</span>
-                  <span className={resolvedPlayerColor === 'w' ? 'player-col' : ''}>
-                    {row.white ? row.white.san : '-'}
-                    {row.whiteMeta?.rank ? ` (#${row.whiteMeta.rank})` : row.whiteMeta?.openingAllowed ? ' (Opening)' : ''}
-                  </span>
-                  <span className={resolvedPlayerColor === 'b' ? 'player-col' : ''}>
-                    {row.black ? row.black.san : '-'}
-                    {row.blackMeta?.rank ? ` (#${row.blackMeta.rank})` : row.blackMeta?.openingAllowed ? ' (Opening)' : ''}
-                  </span>
+        <section className={`panel${collapsedPanels.moves ? ' is-collapsed' : ''}`}>
+          <div className="panel-head">
+            <h2 className="panel-title">Move List</h2>
+            <button
+              type="button"
+              className="panel-toggle"
+              onClick={() => togglePanel('moves')}
+              aria-expanded={!collapsedPanels.moves}
+              aria-label={collapsedPanels.moves ? 'Expand Move List' : 'Collapse Move List'}
+            >
+              {collapsedPanels.moves ? 'Show' : 'Hide'}
+            </button>
+          </div>
+          {!collapsedPanels.moves ? (
+            <>
+              {moveRows.length ? (
+                <div className="move-list" ref={moveListRef}>
+                  <div className="move-row move-head">
+                    <span className="move-num">#</span>
+                    <span className={resolvedPlayerColor === 'w' ? 'player-col' : ''}>{whiteHeaderLabel}</span>
+                    <span className={resolvedPlayerColor === 'b' ? 'player-col' : ''}>{blackHeaderLabel}</span>
+                  </div>
+                  {moveRows.map((row) => (
+                    <div className="move-row" key={row.moveNumber}>
+                      <span className="move-num">{row.moveNumber}.</span>
+                      <span className={resolvedPlayerColor === 'w' ? 'player-col' : ''}>
+                        {row.white ? row.white.san : '-'}
+                        {row.whiteMeta?.rank ? ` (#${row.whiteMeta.rank})` : row.whiteMeta?.openingAllowed ? ' (Opening)' : ''}
+                      </span>
+                      <span className={resolvedPlayerColor === 'b' ? 'player-col' : ''}>
+                        {row.black ? row.black.san : '-'}
+                        {row.blackMeta?.rank ? ` (#${row.blackMeta.rank})` : row.blackMeta?.openingAllowed ? ' (Opening)' : ''}
+                      </span>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          ) : (
-            <p>No moves yet.</p>
-          )}
+              ) : (
+                <p>No moves yet.</p>
+              )}
+            </>
+          ) : null}
         </section>
       </div>
     </div>

@@ -71,14 +71,48 @@ body {
   padding: 1rem;
 }
 
-.panel-title {
+.panel-head {
   margin: -1rem -1rem 0.8rem;
   padding: 0.55rem 0.8rem;
   background: #e7eefb;
   border-bottom: 1px solid #c8d7ef;
   border-radius: 12px 12px 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.panel-title {
+  margin: 0;
+  padding: 0;
   font-size: 1rem;
   font-weight: 700;
+}
+
+.panel-toggle {
+  width: auto;
+  min-width: 0;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.85rem;
+  line-height: 1.1;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.85);
+  color: #17395f;
+  border-color: #afc2df;
+}
+
+.panel-toggle:hover:not(:disabled) {
+  background: #ffffff;
+  border-color: #8faace;
+}
+
+.panel.is-collapsed {
+  padding-bottom: 0.55rem;
+}
+
+.panel.is-collapsed .panel-head {
+  margin-bottom: 0;
 }
 
 .controls {
@@ -443,11 +477,18 @@ select:disabled {
 
 .history-row {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
+  grid-template-columns: 34px minmax(0, 1fr) auto;
   gap: 0.35rem;
   align-items: center;
   font-size: 0.82rem;
   color: #243547;
+}
+
+.history-columns {
+  padding-bottom: 0.15rem;
+  border-bottom: 1px dashed #dbe4f2;
+  font-weight: 700;
+  color: #4f647a;
 }
 
 .history-rank {
@@ -459,9 +500,9 @@ select:disabled {
 }
 
 .history-time {
-  grid-column: 2;
   color: #607489;
   font-size: 0.75rem;
+  white-space: nowrap;
 }
 
 h2 {
@@ -522,6 +563,11 @@ h2 {
 
   .panel {
     padding: 0.8rem;
+  }
+
+  .panel-head {
+    margin: -0.8rem -0.8rem 0.6rem;
+    padding: 0.5rem 0.65rem;
   }
 
   .left-column {
