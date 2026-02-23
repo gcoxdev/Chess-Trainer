@@ -370,10 +370,13 @@ export default function App() {
   const [topN, setTopN] = useState(3);
   const [gameMode, setGameMode] = useState('classic');
   const [randomFenPhase, setRandomFenPhase] = useState('random');
+  const [freeplayAnalyzeMoves, setFreeplayAnalyzeMoves] = useState(true);
   const [allowCommonOpenings, setAllowCommonOpenings] = useState(false);
   const [playerColor, setPlayerColor] = useState('w');
   const [boardStyle, setBoardStyle] = useState('classic');
   const [pieceStyle, setPieceStyle] = useState('default');
+  const [manualBoardOrientation, setManualBoardOrientation] = useState('white');
+  const [autoFlipBoard, setAutoFlipBoard] = useState(false);
   const [activePlayerColor, setActivePlayerColor] = useState('w');
   const [isGameStarted, setIsGameStarted] = useState(false);
   const [status, setStatus] = useState('Configure settings, then click Start Game.');
@@ -449,12 +452,24 @@ export default function App() {
   const playerTurn = game.turn() === activePlayerColor;
   const engineColor = activePlayerColor === 'w' ? 'b' : 'w';
   const randomFenMode = gameMode === 'random-fen';
+  const freeplayMode = gameMode === 'freeplay';
   const settingsLocked = isGameStarted;
-  const resolvedPlayerColor = isGameStarted ? activePlayerColor : (playerColor === 'random' ? null : playerColor);
+  const resolvedPlayerColor = freeplayMode
+    ? null
+    : (isGameStarted ? activePlayerColor : (playerColor === 'random' ? null : playerColor));
   const whiteHeaderLabel = resolvedPlayerColor === 'w' ? 'White (You)' : 'White';
   const blackHeaderLabel = resolvedPlayerColor === 'b' ? 'Black (You)' : 'Black';
   const resultMessage = game.isGameOver() ? getGameResultMessage(game) : '';
-  const engineThinking = isGameStarted && !game.isGameOver() && isProcessing && (randomFenMode || game.turn() === engineColor);
+  const engineThinking = isGameStarted
+    && !game.isGameOver()
+    && isProcessing
+    && (randomFenMode || freeplayMode || game.turn() === engineColor);
+  const boardOrientation = useMemo(() => {
+    if (autoFlipBoard && isGameStarted) {
+      return game.turn() === 'w' ? 'white' : 'black';
+    }
+    return manualBoardOrientation;
+  }, [autoFlipBoard, isGameStarted, game, manualBoardOrientation]);
 
   const turnDisplay = useMemo(() => {
     if (!isGameStarted) {
@@ -463,6 +478,9 @@ export default function App() {
     if (game.isGameOver()) {
       return 'Game over';
     }
+    if (freeplayMode) {
+      return `${turnLabel} to move`;
+    }
     if (playerTurn) {
       return `${turnLabel} to move (You)`;
     }
@@ -470,7 +488,7 @@ export default function App() {
       return `${turnLabel} to move`;
     }
     return `${turnLabel} to move (Engine)`;
-  }, [isGameStarted, game, playerTurn, turnLabel, randomFenMode]);
+  }, [isGameStarted, game, playerTurn, turnLabel, randomFenMode, freeplayMode]);
   const scorePercent = useMemo(() => {
     if (!score.possible) {
       return 0;
@@ -1133,12 +1151,23 @@ export default function App() {
     setScore({ earned: 0, possible: 0, errors: 0 });
     setErrorSquareStyles({});
     setActivePlayerColor('w');
+    setManualBoardOrientation('white');
     setAwaitingNextRandomFen(false);
     setRandomPositionsCompleted(0);
     setCurrentSessionSaved(false);
   };
 
   const finishGame = (board, scoreSnapshot = score) => {
+    if (freeplayMode) {
+      setStatus(board.isGameOver() ? 'Game over.' : 'Freeplay ended.');
+      setCurrentTopMoves([]);
+      setIsProcessing(false);
+      setSelectedSquare('');
+      setDragSourceSquare('');
+      setAwaitingNextRandomFen(false);
+      return;
+    }
+
     const percentValue = scoreSnapshot.possible
       ? (Math.max(0, scoreSnapshot.earned) / scoreSnapshot.possible) * 100
       : 0;
@@ -1258,6 +1287,7 @@ export default function App() {
     setGame(board);
     setIsGameStarted(true);
     setActivePlayerColor(chosenColor);
+    setManualBoardOrientation(chosenColor === 'b' ? 'black' : 'white');
     setCurrentTopMoves([]);
     setLastEvaluatedMoves([]);
     setShowLastEvaluated(false);
@@ -1272,11 +1302,23 @@ export default function App() {
     setCurrentSessionSaved(false);
 
     try {
-          if (randomFenMode) {
+      if (randomFenMode) {
         await loadRandomFenPosition(
           chosenColor,
           `Random mode started as ${chosenColor === 'w' ? 'White' : 'Black'}.`
         );
+        setIsProcessing(false);
+        return;
+      }
+
+      if (freeplayMode) {
+        if (freeplayAnalyzeMoves) {
+          await preloadTopMoves(board.fen(), topN);
+          setStatus(`Freeplay started (${chosenColor === 'w' ? 'White' : 'Black'} orientation). Analysis on.`);
+        } else {
+          setCurrentTopMoves([]);
+          setStatus(`Freeplay started (${chosenColor === 'w' ? 'White' : 'Black'} orientation). Analysis off.`);
+        }
         setIsProcessing(false);
         return;
       }
@@ -1331,12 +1373,12 @@ export default function App() {
       return false;
     }
 
-    if (!playerTurn) {
+    if (!freeplayMode && !playerTurn) {
       setStatus('It is not your turn.');
       return false;
     }
 
-    if (!currentTopMoves.length) {
+    if ((!freeplayMode || freeplayAnalyzeMoves) && !currentTopMoves.length) {
       setStatus('Analyzing position...');
       return false;
     }
@@ -1365,8 +1407,64 @@ export default function App() {
     }
 
     const moveUci = toMoveString(humanMove);
-    const rank = currentTopMoves.indexOf(moveUci) + 1;
+    const rank = (freeplayMode && !freeplayAnalyzeMoves) ? 0 : (currentTopMoves.indexOf(moveUci) + 1);
     const ply = moveHistory.length + 1;
+
+    if (freeplayMode) {
+      const earnedPoints = rank ? pointsForRank(rank, topN) : 0;
+      const rankText = rank ? rankLabel(rank) : '';
+
+      if (freeplayAnalyzeMoves) {
+        setPlayerMoveMeta((prev) => [
+          ...prev,
+          {
+            ply,
+            san: humanMove.san,
+            rank: rank || null,
+            label: rankText || `Outside Top ${topN}`,
+            points: earnedPoints
+          }
+        ]);
+      }
+
+      setGame(testGame);
+      setMoveHistory((prev) => [...prev, humanMove]);
+      setSelectedSquare('');
+      setDragSourceSquare('');
+      setLastEvaluatedMoves(currentTopMoves);
+      setShowLastEvaluated(false);
+      setCurrentTopMoves([]);
+
+      const moveStatus = !freeplayAnalyzeMoves
+        ? 'Freeplay move accepted.'
+        : rank
+          ? `${rankText}. +${earnedPoints} move score.`
+          : `Outside top ${topN}. Freeplay move accepted.`;
+
+      if (testGame.isGameOver()) {
+        setStatus(moveStatus);
+        setIsProcessing(false);
+        return true;
+      }
+
+      if (!freeplayAnalyzeMoves) {
+        setStatus(moveStatus);
+        return true;
+      }
+
+      setIsProcessing(true);
+      void (async () => {
+        try {
+          await preloadTopMoves(testGame.fen(), topN);
+          setStatus(moveStatus);
+        } catch (e) {
+          setStatus(e.message || 'Engine error while analyzing freeplay move.');
+        } finally {
+          setIsProcessing(false);
+        }
+      })();
+      return true;
+    }
 
     if (!rank) {
       const openingMatch = !randomFenMode && allowCommonOpenings && ply <= COMMON_OPENING_MAX_PLY
@@ -1522,14 +1620,15 @@ export default function App() {
       return;
     }
 
-    if (!isGameStarted || !playerTurn || isProcessing || game.isGameOver()) {
+    if (!isGameStarted || isProcessing || game.isGameOver() || (!freeplayMode && !playerTurn)) {
       return;
     }
 
     const piece = game.get(square);
+    const selectableColor = freeplayMode ? game.turn() : activePlayerColor;
 
     if (!selectedSquare) {
-      if (piece && piece.color === activePlayerColor) {
+      if (piece && piece.color === selectableColor) {
         setDragSourceSquare('');
         setSelectedSquare(square);
       }
@@ -1542,7 +1641,7 @@ export default function App() {
       return;
     }
 
-    if (piece && piece.color === activePlayerColor) {
+    if (piece && piece.color === selectableColor) {
       setDragSourceSquare('');
       setSelectedSquare(square);
       return;
@@ -1569,6 +1668,25 @@ export default function App() {
       <div className="board-status" ref={boardStatusRef}>
         <div className="board-head">
           <div className="board-title">Chess Trainer</div>
+          <div className="board-actions">
+            {!autoFlipBoard ? (
+              <button
+                type="button"
+                className="secondary board-flip-button"
+                onClick={() => setManualBoardOrientation((prev) => (prev === 'white' ? 'black' : 'white'))}
+              >
+                Flip Board
+              </button>
+            ) : null}
+            <label className="board-toggle">
+              <span>Flip Each Turn</span>
+              <input
+                type="checkbox"
+                checked={autoFlipBoard}
+                onChange={(e) => setAutoFlipBoard(e.target.checked)}
+              />
+            </label>
+          </div>
         </div>
         <div className="turn-line">
           <strong>Turn:</strong> {turnDisplay}
@@ -1598,8 +1716,8 @@ export default function App() {
             customDropSquareStyle={{ boxShadow: 'inset 0 0 0 6px rgba(255, 255, 255, 0.78)' }}
             customPieces={customPieces}
             boardWidth={boardWidth}
-            boardOrientation={activePlayerColor === 'w' ? 'white' : 'black'}
-            arePiecesDraggable={isGameStarted && !isProcessing && playerTurn && !game.isGameOver()}
+            boardOrientation={boardOrientation}
+            arePiecesDraggable={isGameStarted && !isProcessing && !game.isGameOver() && (freeplayMode || playerTurn)}
           />
         </div>
       </main>
@@ -1654,6 +1772,7 @@ export default function App() {
               <select value={gameMode} disabled={settingsLocked} onChange={(e) => setGameMode(e.target.value)}>
                 <option value="classic">Classic</option>
                 <option value="random-fen">Random Position</option>
+                <option value="freeplay">Freeplay</option>
               </select>
             </label>
 
@@ -1676,7 +1795,7 @@ export default function App() {
                 Skill Level
                 <select
                   value={engineSkillLevel}
-                  disabled={settingsLocked}
+                  disabled={settingsLocked || freeplayMode}
                   onChange={(e) => setEngineSkillLevel(clamp(Number(e.target.value || 5), 0, 20))}
                 >
                   {Array.from({ length: 21 }, (_, i) => (
@@ -1700,7 +1819,7 @@ export default function App() {
               />
             </label>
 
-            {!randomFenMode ? (
+            {!randomFenMode && !freeplayMode ? (
               <label>
                 Allow Common Openings
                 <input
@@ -1708,6 +1827,18 @@ export default function App() {
                   checked={allowCommonOpenings}
                   disabled={settingsLocked}
                   onChange={(e) => setAllowCommonOpenings(e.target.checked)}
+                />
+              </label>
+            ) : null}
+
+            {freeplayMode ? (
+              <label>
+                Analyze Moves
+                <input
+                  type="checkbox"
+                  checked={freeplayAnalyzeMoves}
+                  disabled={settingsLocked}
+                  onChange={(e) => setFreeplayAnalyzeMoves(e.target.checked)}
                 />
               </label>
             ) : null}
@@ -1767,13 +1898,14 @@ export default function App() {
         <section className="panel">
           <h2 className="panel-title">Score</h2>
           <p><strong>Update:</strong> {status}</p>
-          <p><strong>Current:</strong> {score.earned} / {score.possible} ({scorePercent}%)</p>
-          <p><strong>Mistakes:</strong> {score.errors}</p>
+          {!freeplayMode ? <p><strong>Current:</strong> {score.earned} / {score.possible} ({scorePercent}%)</p> : null}
+          {!freeplayMode ? <p><strong>Mistakes:</strong> {score.errors}</p> : null}
           {!randomFenMode ? (
             <p><strong>Opening:</strong> {currentOpening?.label || '-'}</p>
           ) : null}
           {randomFenMode ? <p><strong>Positions:</strong> {randomPositionsCompleted}</p> : null}
-          {!randomFenMode ? (
+          {freeplayMode ? <p><strong>Move Analysis:</strong> {freeplayAnalyzeMoves ? `Top ${topN} enabled` : 'Off'}</p> : null}
+          {!randomFenMode && !freeplayMode ? (
             bestClassicScore ? (
               <p>
                 <strong>Best Classic:</strong>{' '}
@@ -1782,7 +1914,7 @@ export default function App() {
             ) : (
               <p><strong>Best Classic:</strong> -</p>
             )
-          ) : (
+          ) : randomFenMode ? (
             bestRandomSession ? (
               <p>
                 <strong>Best Random:</strong>{' '}
@@ -1792,15 +1924,17 @@ export default function App() {
             ) : (
               <p><strong>Best Random:</strong> -</p>
             )
-          )}
-          <button
+          ) : null}
+          {!freeplayMode ? (
+            <button
             type="button"
             className="secondary"
             onClick={() => setShowScoreHistory((prev) => !prev)}
           >
             {showScoreHistory ? 'Hide Score History' : 'Show Score History'}
           </button>
-          {showScoreHistory ? (
+          ) : null}
+          {!freeplayMode && showScoreHistory ? (
             activeScoreHistory.length ? (
               <div className="history-list">
                 <div className="history-list-head">
