@@ -4,6 +4,24 @@
   background: radial-gradient(circle at 10% 10%, #fef6e4, #e6f0ff 55%, #d3e1ff 100%);
 }
 
+@font-face {
+  font-family: 'CT Unicode DejaVu Sans';
+  src: url('/fonts/unicode/DejaVuSans.ttf?v=2') format('truetype');
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'CT Unicode Noto Symbols 2';
+  src: url('/fonts/unicode/NotoSansSymbols2-Regular.ttf?v=2') format('truetype');
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'CT Unicode Quivira';
+  src: url('/fonts/unicode/Quivira.otf?v=2') format('opentype');
+  font-display: swap;
+}
+
 * {
   box-sizing: border-box;
 }

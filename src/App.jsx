@@ -254,6 +254,32 @@ const PIECE_SYMBOLS = {
   bN: '♞',
   bP: '♟'
 };
+const UNICODE_PIECE_STYLES = {
+  unicode1: {
+    label: 'Unicode 1',
+    fontFamily: '"CT Unicode DejaVu Sans", sans-serif',
+    fontScale: 1,
+    lineHeight: 0.88,
+    yOffset: 0,
+    glyphYOffsetEm: 0.03
+  },
+  unicode6: {
+    label: 'Unicode 2',
+    fontFamily: '"CT Unicode Noto Symbols 2", sans-serif',
+    fontScale: 0.9,
+    lineHeight: 0.9,
+    yOffset: 0,
+    glyphYOffsetEm: 0.18
+  },
+  unicode7: {
+    label: 'Unicode 3',
+    fontFamily: '"CT Unicode Quivira", serif',
+    fontScale: 1.08,
+    lineHeight: 0.94,
+    yOffset: 0,
+    glyphYOffsetEm: 0.02
+  }
+};
 const BOARD_THEMES = {
   classic: {
     label: 'Classic',
@@ -621,7 +647,9 @@ export default function App() {
       return undefined;
     }
 
-    if (pieceStyle === 'glyph') {
+    const unicodeStyle = UNICODE_PIECE_STYLES[pieceStyle] || (pieceStyle === 'glyph' ? UNICODE_PIECE_STYLES.unicode1 : null);
+
+    if (unicodeStyle) {
       const getGlyphPiece = (pieceCode) => ({ squareWidth, isDragging }) => (
         <div
           style={{
@@ -631,17 +659,28 @@ export default function App() {
             alignItems: 'center',
             justifyContent: 'center',
             textAlign: 'center',
-            fontSize: `${squareWidth}px`,
-            lineHeight: 0.88,
+            fontSize: `${squareWidth * (unicodeStyle.fontScale ?? 1)}px`,
+            lineHeight: unicodeStyle.lineHeight,
+            fontFamily: unicodeStyle.fontFamily,
             color: pieceCode[0] === 'w' ? '#21344f' : '#0f1829',
             textShadow: pieceCode[0] === 'w'
               ? '0 1px 0 rgba(255,255,255,0.7)'
               : '0 1px 0 rgba(255,255,255,0.24)',
-            transform: isDragging ? 'translateY(3px) scale(1.03)' : 'translateY(3px)',
+            transform: isDragging
+              ? `translateY(${unicodeStyle.yOffset ?? 0}px) scale(1.03)`
+              : `translateY(${unicodeStyle.yOffset ?? 0}px)`,
             transition: 'transform 120ms ease-out'
           }}
         >
-          {PIECE_SYMBOLS[pieceCode]}
+          <span
+            style={{
+              display: 'block',
+              lineHeight: 1,
+              transform: `translateY(${unicodeStyle.glyphYOffsetEm ?? 0}em)`
+            }}
+          >
+            {PIECE_SYMBOLS[pieceCode]}
+          </span>
         </div>
       );
 
@@ -1043,11 +1082,13 @@ export default function App() {
   }, [pieceStyle]);
 
   const renderCapturedPiece = (pieceCode, key) => {
+    const unicodeStyle = UNICODE_PIECE_STYLES[pieceStyle] || (pieceStyle === 'glyph' ? UNICODE_PIECE_STYLES.unicode1 : null);
     return (
       <span
         className={`capture-piece-glyph ${pieceCode[0] === 'w' ? 'capture-piece-glyph-white-text' : 'capture-piece-glyph-black-text'}`}
         key={key}
         title={pieceCode}
+        style={unicodeStyle ? { fontFamily: unicodeStyle.fontFamily } : undefined}
       >
         {PIECE_SYMBOLS[pieceCode]}
       </span>
@@ -1865,12 +1906,14 @@ export default function App() {
               Piece Style
               <select value={pieceStyle} onChange={(e) => setPieceStyle(e.target.value)}>
                 <option value="default">Default</option>
-                <option value="glyph">Glyph</option>
                 <option value="sprite26774">Line Art</option>
                 <option value="spriteChessPieces">Illustrated</option>
                 <option value="sprite3413429">Regal</option>
                 <option value="spriteChrisdesign">Modern</option>
                 <option value="spriteRetro">Retro</option>
+                {Object.entries(UNICODE_PIECE_STYLES).map(([value, config]) => (
+                  <option value={value} key={value}>{config.label}</option>
+                ))}
                 <option value="alpha">Alpha</option>
                 <option value="glass">Glass</option>
               </select>
