@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Chess } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
 import { useStockfish } from './hooks/useStockfish';
+import { COMMON_OPENING_MAX_PLY, findCurrentOpening, findMatchingCommonOpening } from './data/commonOpenings';
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -369,6 +370,7 @@ export default function App() {
   const [topN, setTopN] = useState(3);
   const [gameMode, setGameMode] = useState('classic');
   const [randomFenPhase, setRandomFenPhase] = useState('random');
+  const [allowCommonOpenings, setAllowCommonOpenings] = useState(false);
   const [playerColor, setPlayerColor] = useState('w');
   const [boardStyle, setBoardStyle] = useState('classic');
   const [pieceStyle, setPieceStyle] = useState('default');
@@ -577,6 +579,22 @@ export default function App() {
 
     return { capturedByWhite, capturedByBlack };
   }, [moveHistory]);
+
+  const currentOpening = useMemo(() => {
+    if (randomFenMode || !moveHistory.length) {
+      return null;
+    }
+
+    const lineMoves = moveHistory.map(toMoveString);
+    for (let i = lineMoves.length; i >= 1; i -= 1) {
+      const match = findCurrentOpening(lineMoves.slice(0, i));
+      if (match) {
+        return match;
+      }
+    }
+
+    return null;
+  }, [randomFenMode, moveHistory]);
 
   const chessboardTheme = useMemo(() => BOARD_THEMES[boardStyle] || BOARD_THEMES.classic, [boardStyle]);
 
@@ -1348,8 +1366,44 @@ export default function App() {
 
     const moveUci = toMoveString(humanMove);
     const rank = currentTopMoves.indexOf(moveUci) + 1;
+    const ply = moveHistory.length + 1;
 
     if (!rank) {
+      const openingMatch = !randomFenMode && allowCommonOpenings && ply <= COMMON_OPENING_MAX_PLY
+        ? findMatchingCommonOpening([...moveHistory.map(toMoveString), moveUci])
+        : null;
+
+      if (openingMatch) {
+        setPlayerMoveMeta((prev) => [
+          ...prev,
+          {
+            ply,
+            san: humanMove.san,
+            rank: null,
+            label: 'Common Opening Allowed',
+            points: 0,
+            openingAllowed: true
+          }
+        ]);
+
+        setGame(testGame);
+        setMoveHistory((prev) => [...prev, humanMove]);
+        setSelectedSquare('');
+        setDragSourceSquare('');
+        setLastEvaluatedMoves(currentTopMoves);
+        setShowLastEvaluated(false);
+        setCurrentTopMoves([]);
+
+        if (testGame.isGameOver()) {
+          finishGame(testGame);
+          return true;
+        }
+
+        setIsProcessing(true);
+        void applyEngineReply(testGame, `Common opening allowed (${openingMatch.label}). No penalty.`);
+        return true;
+      }
+
       setStatus(`Move rejected. Not in top ${topN}.`);
       setLastEvaluatedMoves(currentTopMoves);
       setShowLastEvaluated(false);
@@ -1362,7 +1416,6 @@ export default function App() {
 
     const earnedPoints = pointsForRank(rank, topN);
     const rankText = rankLabel(rank);
-    const ply = moveHistory.length + 1;
 
     const projectedScore = {
       earned: score.earned + earnedPoints,
@@ -1647,6 +1700,18 @@ export default function App() {
               />
             </label>
 
+            {!randomFenMode ? (
+              <label>
+                Allow Common Openings
+                <input
+                  type="checkbox"
+                  checked={allowCommonOpenings}
+                  disabled={settingsLocked}
+                  onChange={(e) => setAllowCommonOpenings(e.target.checked)}
+                />
+              </label>
+            ) : null}
+
             <label>
               Play As
               <select value={playerColor} disabled={settingsLocked} onChange={(e) => setPlayerColor(e.target.value)}>
@@ -1704,6 +1769,9 @@ export default function App() {
           <p><strong>Update:</strong> {status}</p>
           <p><strong>Current:</strong> {score.earned} / {score.possible} ({scorePercent}%)</p>
           <p><strong>Mistakes:</strong> {score.errors}</p>
+          {!randomFenMode ? (
+            <p><strong>Opening:</strong> {currentOpening?.label || '-'}</p>
+          ) : null}
           {randomFenMode ? <p><strong>Positions:</strong> {randomPositionsCompleted}</p> : null}
           {!randomFenMode ? (
             bestClassicScore ? (
@@ -1811,11 +1879,11 @@ export default function App() {
                   <span className="move-num">{row.moveNumber}.</span>
                   <span className={resolvedPlayerColor === 'w' ? 'player-col' : ''}>
                     {row.white ? row.white.san : '-'}
-                    {row.whiteMeta ? ` (#${row.whiteMeta.rank})` : ''}
+                    {row.whiteMeta?.rank ? ` (#${row.whiteMeta.rank})` : row.whiteMeta?.openingAllowed ? ' (Opening)' : ''}
                   </span>
                   <span className={resolvedPlayerColor === 'b' ? 'player-col' : ''}>
                     {row.black ? row.black.san : '-'}
-                    {row.blackMeta ? ` (#${row.blackMeta.rank})` : ''}
+                    {row.blackMeta?.rank ? ` (#${row.blackMeta.rank})` : row.blackMeta?.openingAllowed ? ' (Opening)' : ''}
                   </span>
                 </div>
               ))}
