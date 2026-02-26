@@ -72,12 +72,12 @@ def main():
     # Clean previous generated outputs so reruns fully replace the puzzle pack.
     # Keep documentation files (README) if present.
     if theme_dir.exists():
-      shutil.rmtree(theme_dir)
+        shutil.rmtree(theme_dir)
     theme_dir.mkdir(parents=True, exist_ok=True)
     for name in ('manifest.json', 'random.json'):
-      target = out_dir / name
-      if target.exists():
-        target.unlink()
+        target = out_dir / name
+        if target.exists():
+            target.unlink()
 
     state = {
         'counts': defaultdict(int),

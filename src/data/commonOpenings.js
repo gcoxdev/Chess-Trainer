@@ -6,6 +6,10 @@ import openingsD from './lichess-openings/d.tsv?raw';
 import openingsE from './lichess-openings/e.tsv?raw';
 
 const LICHESS_OPENINGS_TSV = [openingsA, openingsB, openingsC, openingsD, openingsE].join('\n');
+// Safe upper bound used only for early guard checks before the lazy index is built.
+// The exact max ply is derived from the dataset on first use.
+const COMMON_OPENING_MAX_PLY = 120;
+let openingIndexCache = null;
 
 function toUci(move) {
   return `${move.from}${move.to}${move.promotion ?? ''}`;
@@ -103,7 +107,12 @@ function buildOpeningPrefixIndex() {
   return { entries, prefixMap, maxPly };
 }
 
-const { entries: LICHESS_OPENING_ENTRIES, prefixMap: OPENING_PREFIX_MAP, maxPly: COMMON_OPENING_MAX_PLY } = buildOpeningPrefixIndex();
+function ensureOpeningIndex() {
+  if (!openingIndexCache) {
+    openingIndexCache = buildOpeningPrefixIndex();
+  }
+  return openingIndexCache;
+}
 
 function chooseOpeningLabel(matches, currentPly) {
   if (!matches?.length) {
@@ -116,9 +125,7 @@ function chooseOpeningLabel(matches, currentPly) {
     return null;
   }
 
-  return matches.length > 1
-    ? `${chosen.name} (${chosen.eco})`
-    : `${chosen.name} (${chosen.eco})`;
+  return `${chosen.name} (${chosen.eco})`;
 }
 
 export function findMatchingCommonOpening(lineUciMoves) {
@@ -126,7 +133,12 @@ export function findMatchingCommonOpening(lineUciMoves) {
     return null;
   }
 
-  const matches = OPENING_PREFIX_MAP.get(lineUciMoves.join(' '));
+  const { prefixMap, maxPly } = ensureOpeningIndex();
+  if (lineUciMoves.length > maxPly) {
+    return null;
+  }
+
+  const matches = prefixMap.get(lineUciMoves.join(' '));
   if (!matches?.length) {
     return null;
   }
@@ -141,4 +153,4 @@ export function findCurrentOpening(lineUciMoves) {
   return findMatchingCommonOpening(lineUciMoves);
 }
 
-export { COMMON_OPENING_MAX_PLY, LICHESS_OPENING_ENTRIES };
+export { COMMON_OPENING_MAX_PLY };

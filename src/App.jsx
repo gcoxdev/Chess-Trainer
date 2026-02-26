@@ -66,6 +66,21 @@ function countPiecesFromFen(board) {
   return (board.fen().split(' ')[0].match(/[prnbqkPRNBQK]/g) || []).length;
 }
 
+function replayBoardFromMoves(moves, startingFen = START_FEN) {
+  const board = new Chess(startingFen);
+  for (const move of moves || []) {
+    const applied = board.move({
+      from: move.from,
+      to: move.to,
+      promotion: move.promotion
+    });
+    if (!applied) {
+      return null;
+    }
+  }
+  return board;
+}
+
 const SCORE_HISTORY_STORAGE_KEY = 'chess-trainer-score-history-v1';
 
 function loadScoreHistory() {
@@ -87,7 +102,8 @@ function loadScoreHistory() {
 
     // Backward compatibility: older versions stored classic as a flat array.
     if (Array.isArray(parsed?.classic) && parsed.classic.length && !Object.keys(classicBySkill).length) {
-      classicBySkill.legacy = parsed.classic;
+      // Migrate old flat classic history into the current default skill bucket so it remains visible.
+      classicBySkill['5'] = parsed.classic;
     }
 
     // Backward compatibility: older versions stored random history as a flat array.
@@ -433,6 +449,7 @@ export default function App() {
   const [autoFlipBoard, setAutoFlipBoard] = useState(false);
   const [activePlayerColor, setActivePlayerColor] = useState('w');
   const [isGameStarted, setIsGameStarted] = useState(false);
+  const [resultOverrideMessage, setResultOverrideMessage] = useState('');
   const [status, setStatus] = useState('Configure settings, then click Start Game.');
   const [currentTopMoves, setCurrentTopMoves] = useState([]);
   const [lastEvaluatedMoves, setLastEvaluatedMoves] = useState([]);
@@ -465,10 +482,10 @@ export default function App() {
   });
 
   const boardWrapRef = useRef(null);
-  const boardAreaRef = useRef(null);
   const boardStatusRef = useRef(null);
   const moveListRef = useRef(null);
   const puzzlePoolCacheRef = useRef(new Map());
+  const invalidFlashTimeoutsRef = useRef([]);
 
   const { ready, error, configure, evaluateTopMoves } = useStockfish();
 
@@ -525,15 +542,16 @@ export default function App() {
   const randomFenMode = gameMode === 'random-fen';
   const puzzleMode = gameMode === 'puzzle';
   const freeplayMode = gameMode === 'freeplay';
+  const effectiveGameOver = game.isGameOver() || Boolean(resultOverrideMessage);
   const settingsLocked = isGameStarted;
   const resolvedPlayerColor = freeplayMode
     ? null
     : (isGameStarted ? activePlayerColor : (playerColor === 'random' ? null : playerColor));
   const whiteHeaderLabel = resolvedPlayerColor === 'w' ? 'White (You)' : 'White';
   const blackHeaderLabel = resolvedPlayerColor === 'b' ? 'Black (You)' : 'Black';
-  const resultMessage = game.isGameOver() ? getGameResultMessage(game) : '';
+  const resultMessage = resultOverrideMessage || (game.isGameOver() ? getGameResultMessage(game) : '');
   const engineThinking = isGameStarted
-    && !game.isGameOver()
+    && !effectiveGameOver
     && isProcessing
     && (randomFenMode || puzzleMode || freeplayMode || game.turn() === engineColor);
   const boardOrientation = useMemo(() => {
@@ -547,7 +565,7 @@ export default function App() {
     if (!isGameStarted) {
       return 'Not started';
     }
-    if (game.isGameOver()) {
+    if (effectiveGameOver) {
       return 'Game over';
     }
     if (freeplayMode || puzzleMode) {
@@ -560,7 +578,7 @@ export default function App() {
       return `${turnLabel} to move`;
     }
     return `${turnLabel} to move (Engine)`;
-  }, [isGameStarted, game, playerTurn, turnLabel, randomFenMode, freeplayMode, puzzleMode]);
+  }, [isGameStarted, effectiveGameOver, game, playerTurn, turnLabel, randomFenMode, freeplayMode, puzzleMode]);
   const scorePercent = useMemo(() => {
     if (!score.possible) {
       return 0;
@@ -622,7 +640,6 @@ export default function App() {
       if (b.possible !== a.possible) return b.possible - a.possible;
       if (b.percent !== a.percent) return b.percent - a.percent;
       if (b.puzzles !== a.puzzles) return b.puzzles - a.puzzles;
-      if (b.possible !== a.possible) return b.possible - a.possible;
       return b.earned - a.earned;
     })[0];
   }, [puzzleHistoryForSelectedTheme]);
@@ -1225,6 +1242,11 @@ export default function App() {
   }, [selectedSquare, dragSourceSquare, errorSquareStyles, showValidMoves, game]);
 
   const flashInvalidMoveSquares = (sourceSquare, targetSquare) => {
+    for (const timeoutId of invalidFlashTimeoutsRef.current) {
+      clearTimeout(timeoutId);
+    }
+    invalidFlashTimeoutsRef.current = [];
+
     const initial = {
       transition: 'background-color 1500ms ease-out',
       backgroundColor: 'rgba(110, 0, 0, 0.95)',
@@ -1241,17 +1263,28 @@ export default function App() {
       [targetSquare]: initial
     });
 
-    setTimeout(() => {
+    const fadeTimeout = setTimeout(() => {
       setErrorSquareStyles({
         [sourceSquare]: faded,
         [targetSquare]: faded
       });
     }, 40);
 
-    setTimeout(() => {
+    const clearTimeoutId = setTimeout(() => {
       setErrorSquareStyles({});
     }, 1600);
+
+    invalidFlashTimeoutsRef.current = [fadeTimeout, clearTimeoutId];
   };
+
+  useEffect(() => {
+    return () => {
+      for (const timeoutId of invalidFlashTimeoutsRef.current) {
+        clearTimeout(timeoutId);
+      }
+      invalidFlashTimeoutsRef.current = [];
+    };
+  }, []);
 
   const resetToSetup = () => {
     if (isGameStarted && randomFenMode && !currentSessionSaved && (score.possible > 0 || randomPositionsCompleted > 0)) {
@@ -1298,6 +1331,7 @@ export default function App() {
 
     setGame(new Chess());
     setIsGameStarted(false);
+    setResultOverrideMessage('');
     setCurrentTopMoves([]);
     setLastEvaluatedMoves([]);
     setShowLastEvaluated(false);
@@ -1322,9 +1356,12 @@ export default function App() {
     setCurrentSessionSaved(false);
   };
 
-  const finishGame = (board, scoreSnapshot = score) => {
+  const finishGame = (board, scoreSnapshot = score, options = {}) => {
+    const { resultOverride = '', statusOverride = '' } = options;
+    setResultOverrideMessage(resultOverride || '');
+
     if (freeplayMode || puzzleMode) {
-      setStatus(board.isGameOver() ? 'Game over.' : (puzzleMode ? 'Puzzle mode ended.' : 'Freeplay ended.'));
+      setStatus(statusOverride || resultOverride || (board.isGameOver() ? 'Game over.' : (puzzleMode ? 'Puzzle mode ended.' : 'Freeplay ended.')));
       setCurrentTopMoves([]);
       setIsProcessing(false);
       setSelectedSquare('');
@@ -1338,7 +1375,7 @@ export default function App() {
       ? (Math.max(0, scoreSnapshot.earned) / scoreSnapshot.possible) * 100
       : 0;
     const percent = percentValue.toFixed(1);
-    setStatus(`Final score: ${formatScoreValue(Math.max(0, scoreSnapshot.earned))}/${formatScoreValue(scoreSnapshot.possible)} (${percent}%).`);
+    setStatus(statusOverride || `Final score: ${formatScoreValue(Math.max(0, scoreSnapshot.earned))}/${formatScoreValue(scoreSnapshot.possible)} (${percent}%).`);
     setCurrentTopMoves([]);
     setIsProcessing(false);
     setSelectedSquare('');
@@ -1514,12 +1551,13 @@ export default function App() {
     }
   };
 
-  const applyEngineReply = async (boardAfterHumanMove, lastRankLabel) => {
+  const applyEngineReply = async (boardAfterHumanMove, lastRankLabel, scoreSnapshot = score, historyAfterHumanMove = null) => {
     const { bestMove } = await evaluateTopMoves({ fen: boardAfterHumanMove.fen(), topN: 1 });
     const liveBoard = new Chess(boardAfterHumanMove.fen());
+    let engineMove = null;
 
     if (bestMove && bestMove !== '(none)') {
-      const engineMove = liveBoard.move({
+      engineMove = liveBoard.move({
         from: bestMove.slice(0, 2),
         to: bestMove.slice(2, 4),
         promotion: bestMove[4]
@@ -1537,8 +1575,23 @@ export default function App() {
       setDragSourceSquare('');
     }
 
+    if (!randomFenMode && !puzzleMode) {
+      const repetitionLine = historyAfterHumanMove
+        ? (engineMove ? [...historyAfterHumanMove, engineMove] : historyAfterHumanMove)
+        : null;
+      const repetitionBoard = repetitionLine ? replayBoardFromMoves(repetitionLine) : null;
+      if (repetitionBoard && repetitionBoard.isThreefoldRepetition()) {
+        finishGame(repetitionBoard, scoreSnapshot, { resultOverride: 'Draw by threefold repetition.' });
+        return;
+      }
+      if (!repetitionBoard && liveBoard.isThreefoldRepetition()) {
+        finishGame(liveBoard, scoreSnapshot, { resultOverride: 'Draw by threefold repetition.' });
+        return;
+      }
+    }
+
     if (liveBoard.isGameOver()) {
-      finishGame(liveBoard);
+      finishGame(liveBoard, scoreSnapshot);
       return;
     }
 
@@ -1558,6 +1611,7 @@ export default function App() {
     const board = new Chess();
     setGame(board);
     setIsGameStarted(true);
+    setResultOverrideMessage('');
     setActivePlayerColor(chosenColor);
     setManualBoardOrientation(chosenColor === 'b' ? 'black' : 'white');
     setCurrentTopMoves([]);
@@ -1652,7 +1706,7 @@ export default function App() {
       return false;
     }
 
-    if (game.isGameOver()) {
+    if (effectiveGameOver) {
       setStatus('Game is over. Start a new game.');
       return false;
     }
@@ -1667,7 +1721,10 @@ export default function App() {
       return false;
     }
 
-    const testGame = new Chess(game.fen());
+    const needsHistoryAwareBoard = !randomFenMode && !puzzleMode;
+    const testGame = needsHistoryAwareBoard
+      ? (replayBoardFromMoves(moveHistory) || new Chess(game.fen()))
+      : new Chess(game.fen());
     const movingPiece = testGame.get(sourceSquare);
     let promotion = forcedPromotion;
 
@@ -1810,6 +1867,14 @@ export default function App() {
           ? `${rankText}. +${formatScoreValue(earnedPoints)} move score.`
           : `Outside top ${topN}. Freeplay move accepted.`;
 
+      if (testGame.isThreefoldRepetition()) {
+        finishGame(testGame, score, {
+          resultOverride: 'Draw by threefold repetition.',
+          statusOverride: 'Draw by threefold repetition.'
+        });
+        return true;
+      }
+
       if (testGame.isGameOver()) {
         setStatus(moveStatus);
         setIsProcessing(false);
@@ -1861,13 +1926,18 @@ export default function App() {
         setShowLastEvaluated(false);
         setCurrentTopMoves([]);
 
+        if (testGame.isThreefoldRepetition()) {
+          finishGame(testGame, score, { resultOverride: 'Draw by threefold repetition.' });
+          return true;
+        }
+
         if (testGame.isGameOver()) {
           finishGame(testGame);
           return true;
         }
 
         setIsProcessing(true);
-        void applyEngineReply(testGame, `Common opening allowed (${openingMatch.label}). No penalty.`);
+        void applyEngineReply(testGame, `Common opening allowed (${openingMatch.label}). No penalty.`, score, [...moveHistory, humanMove]);
         return true;
       }
 
@@ -1915,6 +1985,11 @@ export default function App() {
     setShowLastEvaluated(false);
     setCurrentTopMoves([]);
 
+    if (!randomFenMode && testGame.isThreefoldRepetition()) {
+      finishGame(testGame, projectedScore, { resultOverride: 'Draw by threefold repetition.' });
+      return true;
+    }
+
     if (!randomFenMode && testGame.isGameOver()) {
       finishGame(testGame, projectedScore);
       return true;
@@ -1931,7 +2006,7 @@ export default function App() {
       return true;
     }
 
-    void applyEngineReply(testGame, `${rankText}. +${formatScoreValue(earnedPoints)} points`);
+    void applyEngineReply(testGame, `${rankText}. +${formatScoreValue(earnedPoints)} points`, projectedScore, [...moveHistory, humanMove]);
     return true;
   };
 
@@ -1944,11 +2019,28 @@ export default function App() {
     return !!piece;
   };
 
+  const resignGame = () => {
+    if (!isGameStarted || isProcessing || effectiveGameOver || randomFenMode || puzzleMode) {
+      return;
+    }
+
+    const resigningSide = game.turn() === 'w' ? 'White' : 'Black';
+    const winner = game.turn() === 'w' ? 'Black' : 'White';
+    const result = `${resigningSide} resigned. ${winner} wins.`;
+
+    if (freeplayMode) {
+      finishGame(game, score, { resultOverride: result, statusOverride: result });
+      return;
+    }
+
+    finishGame(game, score, { resultOverride: result });
+  };
+
   const clearActiveScoreHistory = () => {
     const confirmMessage = puzzleMode
       ? `Clear Puzzle score history and top score for theme ${puzzleTheme}?`
       : randomFenMode
-        ? 'Clear all Random Position score history and top score?'
+        ? `Clear Random Position score history and top score for ${randomFenPhase === 'random' ? 'Random' : randomFenPhase} phase?`
         : `Clear Classic score history and top score for Skill Level ${engineSkillLevel}?`;
 
     if (!window.confirm(confirmMessage)) {
@@ -1977,7 +2069,7 @@ export default function App() {
       puzzleMode
         ? `Puzzle history cleared for theme ${puzzleTheme}.`
         : randomFenMode
-          ? 'Random score history cleared.'
+          ? `Random score history cleared for ${randomFenPhase === 'random' ? 'Random' : randomFenPhase} phase.`
           : `Classic history cleared for skill level ${engineSkillLevel}.`
     );
   };
@@ -2007,7 +2099,7 @@ export default function App() {
       return;
     }
 
-    if (!isGameStarted || isProcessing || game.isGameOver() || (!freeplayMode && !playerTurn)) {
+    if (!isGameStarted || isProcessing || effectiveGameOver || (!freeplayMode && !playerTurn)) {
       return;
     }
 
@@ -2073,6 +2165,16 @@ export default function App() {
                 onChange={(e) => setAutoFlipBoard(e.target.checked)}
               />
             </label>
+            {isGameStarted && !randomFenMode && !puzzleMode ? (
+              <button
+                type="button"
+                className="secondary board-flip-button"
+                onClick={resignGame}
+                disabled={isProcessing || effectiveGameOver}
+              >
+                Resign
+              </button>
+            ) : null}
           </div>
         </div>
         <div className="turn-line">
@@ -2087,7 +2189,7 @@ export default function App() {
       </div>
 
       <main className="board-wrap" ref={boardWrapRef}>
-        <div className="board-area" ref={boardAreaRef}>
+        <div className="board-area">
           <Chessboard
             id="trainer-board"
             position={game.fen() || START_FEN}
@@ -2104,7 +2206,7 @@ export default function App() {
             customPieces={customPieces}
             boardWidth={boardWidth}
             boardOrientation={boardOrientation}
-            arePiecesDraggable={isGameStarted && !isProcessing && !game.isGameOver() && (freeplayMode || puzzleMode || playerTurn)}
+            arePiecesDraggable={isGameStarted && !isProcessing && !effectiveGameOver && (freeplayMode || puzzleMode || playerTurn)}
           />
         </div>
       </main>

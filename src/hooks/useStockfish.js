@@ -25,6 +25,7 @@ export function useStockfish() {
   const workerRef = useRef(null);
   const pendingRef = useRef(null);
   const linesRef = useRef([]);
+  const requestSeqRef = useRef(0);
 
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
@@ -32,6 +33,15 @@ export function useStockfish() {
   useEffect(() => {
     const worker = new Worker('/stockfish.js');
     workerRef.current = worker;
+
+    const rejectPending = (message) => {
+      if (!pendingRef.current) {
+        return;
+      }
+      pendingRef.current.reject(new Error(message));
+      pendingRef.current = null;
+      linesRef.current = [];
+    };
 
     worker.onmessage = (event) => {
       const line = String(event.data ?? '');
@@ -55,6 +65,8 @@ export function useStockfish() {
     };
 
     worker.onerror = () => {
+      rejectPending('Stockfish worker error');
+      setReady(false);
       setError('Failed to start Stockfish worker. Run npm install, npm run setup-engine, then restart dev server.');
     };
 
@@ -62,6 +74,7 @@ export function useStockfish() {
     worker.postMessage('isready');
 
     return () => {
+      rejectPending('Stockfish worker terminated');
       worker.terminate();
       workerRef.current = null;
       pendingRef.current = null;
@@ -89,7 +102,29 @@ export function useStockfish() {
     }
 
     return new Promise((resolve, reject) => {
-      pendingRef.current = { resolve, reject, topN };
+      const requestId = ++requestSeqRef.current;
+      const timeoutId = window.setTimeout(() => {
+        if (!pendingRef.current || pendingRef.current.id !== requestId) {
+          return;
+        }
+        pendingRef.current.reject(new Error('Engine analysis timed out'));
+        pendingRef.current = null;
+        linesRef.current = [];
+        send('stop');
+      }, 15000);
+
+      pendingRef.current = {
+        id: requestId,
+        topN,
+        resolve: (payload) => {
+          window.clearTimeout(timeoutId);
+          resolve(payload);
+        },
+        reject: (err) => {
+          window.clearTimeout(timeoutId);
+          reject(err);
+        }
+      };
       linesRef.current = [];
 
       send('stop');
