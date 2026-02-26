@@ -2377,7 +2377,7 @@ export default function App() {
             bestPuzzleSession ? (
               <p>
                 <strong>Best Puzzle:</strong>{' '}
-                {bestPuzzleSession.puzzles} puzzles, {Math.max(0, bestPuzzleSession.earned)} / {bestPuzzleSession.possible} ({bestPuzzleSession.percent.toFixed(1)}%)
+                {bestPuzzleSession.puzzles} puzzles, {formatScoreValue(Math.max(0, bestPuzzleSession.earned))} / {formatScoreValue(bestPuzzleSession.possible)} ({bestPuzzleSession.percent.toFixed(1)}%)
                 {` [${formatPuzzleThemeLabel(puzzleTheme)}]`}
               </p>
             ) : (
@@ -2428,7 +2428,7 @@ export default function App() {
                     <span className="history-rank">#{index + 1}</span>
                     <span className="history-main">
                       {puzzleMode
-                        ? `${entry.puzzles} puz, ${Math.max(0, entry.earned)}/${entry.possible} (${entry.percent.toFixed(1)}%)`
+                        ? `${entry.puzzles} puz, ${formatScoreValue(Math.max(0, entry.earned))}/${formatScoreValue(entry.possible)} (${entry.percent.toFixed(1)}%)`
                         : randomFenMode
                         ? `${entry.positions} pos, ${formatScoreValue(Math.max(0, entry.earned))}/${formatScoreValue(entry.possible)} (${entry.percent.toFixed(1)}%)${entry.topN ? `, Top ${entry.topN}` : ''}`
                         : `${formatScoreValue(Math.max(0, entry.earned))}/${formatScoreValue(entry.possible)} (${entry.percent.toFixed(1)}%)${entry.topN ? `, Top ${entry.topN}` : ''}`}
