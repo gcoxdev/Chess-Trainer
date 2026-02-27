@@ -81,6 +81,41 @@ function replayBoardFromMoves(moves, startingFen = START_FEN) {
   return board;
 }
 
+function bestMoveSanFromHistory(historyMoves, bestMoveUci) {
+  if (!bestMoveUci) {
+    return '';
+  }
+
+  const board = replayBoardFromMoves(historyMoves);
+  if (!board) {
+    return bestMoveUci;
+  }
+
+  const parsed = {
+    from: bestMoveUci.slice(0, 2),
+    to: bestMoveUci.slice(2, 4),
+    promotion: bestMoveUci[4]
+  };
+  const applied = board.move(parsed);
+  return applied?.san || bestMoveUci;
+}
+
+function formatMoveMetaDisplay(meta) {
+  if (!meta) {
+    return '';
+  }
+  if (meta.rank === 1) {
+    return '#1';
+  }
+  if (meta.rank && meta.rank > 1) {
+    return meta.bestMove ? `#${meta.rank} - ${meta.bestMove}` : `#${meta.rank}`;
+  }
+  if (meta.openingAllowed) {
+    return 'Opening';
+  }
+  return '';
+}
+
 const SCORE_HISTORY_STORAGE_KEY = 'chess-trainer-score-history-v1';
 
 function loadScoreHistory() {
@@ -585,6 +620,15 @@ export default function App() {
     }
     return ((Math.max(0, score.earned) / score.possible) * 100).toFixed(1);
   }, [score]);
+  const showWhiteRankColumn = freeplayMode || resolvedPlayerColor === 'w';
+  const showBlackRankColumn = freeplayMode || resolvedPlayerColor === 'b';
+  const moveRowTemplate = showWhiteRankColumn && showBlackRankColumn
+    ? '36px minmax(0, 1fr) minmax(90px, 0.8fr) minmax(0, 1fr) minmax(90px, 0.8fr)'
+    : showWhiteRankColumn
+      ? '36px minmax(0, 1fr) minmax(90px, 0.8fr) minmax(0, 1fr)'
+      : showBlackRankColumn
+        ? '36px minmax(0, 1fr) minmax(0, 1fr) minmax(90px, 0.8fr)'
+        : '36px minmax(0, 1fr) minmax(0, 1fr)';
 
   useEffect(() => {
     try {
@@ -1749,6 +1793,7 @@ export default function App() {
 
     const moveUci = toMoveString(humanMove);
     const rank = (freeplayMode && !freeplayAnalyzeMoves) ? 0 : (currentTopMoves.indexOf(moveUci) + 1);
+    const bestMove = bestMoveSanFromHistory(moveHistory, currentTopMoves[0]);
     const ply = moveHistory.length + 1;
 
     if (puzzleMode) {
@@ -1848,7 +1893,8 @@ export default function App() {
             san: humanMove.san,
             rank: rank || null,
             label: rankText || `Outside Top ${topN}`,
-            points: earnedPoints
+            points: earnedPoints,
+            bestMove
           }
         ]);
       }
@@ -1914,7 +1960,8 @@ export default function App() {
             rank: null,
             label: 'Common Opening Allowed',
             points: 0,
-            openingAllowed: true
+            openingAllowed: true,
+            bestMove
           }
         ]);
 
@@ -1973,7 +2020,8 @@ export default function App() {
         san: humanMove.san,
         rank,
         label: rankText,
-        points: earnedPoints
+        points: earnedPoints,
+        bestMove
       }
     ]);
 
@@ -2592,22 +2640,24 @@ export default function App() {
             <>
               {moveRows.length ? (
                 <div className="move-list" ref={moveListRef}>
-                  <div className="move-row move-head">
+                  <div className="move-row move-head" style={{ gridTemplateColumns: moveRowTemplate }}>
                     <span className="move-num">#</span>
                     <span className={resolvedPlayerColor === 'w' ? 'player-col' : ''}>{whiteHeaderLabel}</span>
+                    {showWhiteRankColumn ? <span>Rank</span> : null}
                     <span className={resolvedPlayerColor === 'b' ? 'player-col' : ''}>{blackHeaderLabel}</span>
+                    {showBlackRankColumn ? <span>Rank</span> : null}
                   </div>
                   {moveRows.map((row) => (
-                    <div className="move-row" key={row.moveNumber}>
+                    <div className="move-row" key={row.moveNumber} style={{ gridTemplateColumns: moveRowTemplate }}>
                       <span className="move-num">{row.moveNumber}.</span>
                       <span className={resolvedPlayerColor === 'w' ? 'player-col' : ''}>
                         {row.white ? row.white.san : '-'}
-                        {row.whiteMeta?.rank ? ` (#${row.whiteMeta.rank})` : row.whiteMeta?.openingAllowed ? ' (Opening)' : ''}
                       </span>
+                      {showWhiteRankColumn ? <span className="move-meta">{formatMoveMetaDisplay(row.whiteMeta)}</span> : null}
                       <span className={resolvedPlayerColor === 'b' ? 'player-col' : ''}>
                         {row.black ? row.black.san : '-'}
-                        {row.blackMeta?.rank ? ` (#${row.blackMeta.rank})` : row.blackMeta?.openingAllowed ? ' (Opening)' : ''}
                       </span>
+                      {showBlackRankColumn ? <span className="move-meta">{formatMoveMetaDisplay(row.blackMeta)}</span> : null}
                     </div>
                   ))}
                 </div>

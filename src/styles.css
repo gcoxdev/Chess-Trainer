@@ -522,8 +522,8 @@ h2 {
 
 .move-row {
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) minmax(0, 1fr);
-  gap: 0.5rem;
+  grid-template-columns: 36px minmax(0, 1fr) minmax(90px, 0.8fr) minmax(0, 1fr) minmax(90px, 0.8fr);
+  gap: 0.45rem;
   align-items: center;
 }
 
@@ -544,6 +544,12 @@ h2 {
 .player-col {
   color: #163f70;
   font-weight: 700;
+}
+
+.move-meta {
+  color: #4d6177;
+  font-size: 0.82rem;
+  white-space: nowrap;
 }
 
 @media (max-width: 1024px) {
