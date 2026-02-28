@@ -1,7 +1,6 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Chess } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
-import { TouchBackend } from 'react-dnd-touch-backend';
 import { useStockfish } from './hooks/useStockfish';
 import { COMMON_OPENING_MAX_PLY, findCurrentOpening, findMatchingCommonOpening } from './data/commonOpenings';
 
@@ -885,18 +884,41 @@ export default function App() {
   }, [viewingHistory, clampedViewedPly, playerMetaByPly, moveHistory]);
 
   const displayArrows = useMemo(() => {
-    const arrows = Array.isArray(drawnArrows) ? [...drawnArrows] : [];
+    const arrows = Array.isArray(drawnArrows) ? drawnArrows : [];
     if (!replayBestMoveArrow) {
       return arrows;
     }
 
     const [from, to] = replayBestMoveArrow;
     const exists = arrows.some((arrow) => Array.isArray(arrow) && arrow[0] === from && arrow[1] === to);
-    if (!exists) {
-      arrows.push(replayBestMoveArrow);
-    }
-    return arrows;
+    return exists ? arrows : [...arrows, replayBestMoveArrow];
   }, [drawnArrows, replayBestMoveArrow]);
+
+  const areArrowsEqual = useCallback((a, b) => {
+    if (a === b) {
+      return true;
+    }
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) {
+      return false;
+    }
+
+    for (let i = 0; i < a.length; i += 1) {
+      const left = a[i];
+      const right = b[i];
+      if (!Array.isArray(left) || !Array.isArray(right)) {
+        return false;
+      }
+      if (left[0] !== right[0] || left[1] !== right[1] || (left[2] || '') !== (right[2] || '')) {
+        return false;
+      }
+    }
+    return true;
+  }, []);
+
+  const handleArrowsChange = useCallback((nextArrows) => {
+    const normalized = Array.isArray(nextArrows) ? nextArrows : [];
+    setDrawnArrows((prev) => (areArrowsEqual(prev, normalized) ? prev : normalized));
+  }, [areArrowsEqual]);
 
   const moveRows = useMemo(() => {
     const rows = [];
@@ -2540,18 +2562,14 @@ export default function App() {
           <Chessboard
             id="trainer-board"
             position={displayedBoard.fen() || START_FEN}
-            customDndBackend={TouchBackend}
-            customDndBackendOptions={{
-              enableMouseEvents: true,
-              touchSlop: DRAG_START_SLOP_PX
-            }}
+            dragActivationDistance={DRAG_START_SLOP_PX}
             onPieceDragBegin={onPieceDragBegin}
             onPieceDragEnd={onPieceDragEnd}
             onPieceDrop={onDrop}
             onPromotionPieceSelect={onPromotionPieceSelect}
             onSquareClick={onSquareClick}
             onSquareRightClick={onSquareRightClick}
-            onArrowsChange={setDrawnArrows}
+            onArrowsChange={handleArrowsChange}
             customArrows={displayArrows}
             customSquareStyles={selectedSquareStyles}
             customLightSquareStyle={{ backgroundColor: chessboardTheme.light }}

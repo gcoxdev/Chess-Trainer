@@ -24,7 +24,7 @@ function walkFiles(dir) {
 
 function rankCandidate(filePath) {
   const base = path.basename(filePath);
-  if (base === 'stockfish-nnue-16-single.js') return 300;
+  if (/^stockfish(?:-nnue)?(?:-[\d.]+)?-single\.js$/i.test(base)) return 300;
   if (base.includes('single') && base.endsWith('.js')) return 250;
   if (base === 'stockfish.js') return 200;
   if (base.includes('no-simd') && base.endsWith('.js')) return 100;
