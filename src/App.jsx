@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Chess } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
+import { TouchBackend } from 'react-dnd-touch-backend';
 import { useStockfish } from './hooks/useStockfish';
 import { COMMON_OPENING_MAX_PLY, findCurrentOpening, findMatchingCommonOpening } from './data/commonOpenings';
 
@@ -326,6 +327,7 @@ function getGameResultMessage(board) {
 }
 
 const START_FEN = new Chess().fen();
+const DRAG_START_SLOP_PX = 20;
 const VALID_MOVE_DOT = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' shape-rendering='geometricPrecision'%3E%3Ccircle cx='50' cy='50' r='22' fill='%23228B22' fill-opacity='0.97'/%3E%3C/svg%3E")`;
 const PIECE_TYPE_LABEL = { p: 'P', n: 'N', b: 'B', r: 'R', q: 'Q', k: 'K' };
 const PIECE_SYMBOLS = {
@@ -505,8 +507,11 @@ export default function App() {
   const [dragSourceSquare, setDragSourceSquare] = useState('');
   const [playerMoveMeta, setPlayerMoveMeta] = useState([]);
   const [moveHistory, setMoveHistory] = useState([]);
+  const [viewedPly, setViewedPly] = useState(0);
+  const [sessionStartFen, setSessionStartFen] = useState(START_FEN);
   const [errorSquareStyles, setErrorSquareStyles] = useState({});
   const [rightClickedSquares, setRightClickedSquares] = useState({});
+  const [drawnArrows, setDrawnArrows] = useState([]);
   const [showValidMoves, setShowValidMoves] = useState(true);
   const [score, setScore] = useState({ earned: 0, possible: 0, errors: 0 });
   const [awaitingNextRandomFen, setAwaitingNextRandomFen] = useState(false);
@@ -532,6 +537,7 @@ export default function App() {
   const moveListRef = useRef(null);
   const puzzlePoolCacheRef = useRef(new Map());
   const invalidFlashTimeoutsRef = useRef([]);
+  const previousMoveHistoryLenRef = useRef(0);
 
   const { ready, error, configure, beginNewGame, evaluateTopMoves, chooseMoveFast } = useStockfish();
 
@@ -582,7 +588,17 @@ export default function App() {
     };
   }, []);
 
-  const turnLabel = useMemo(() => (game.turn() === 'w' ? 'White' : 'Black'), [game]);
+  const clampedViewedPly = useMemo(() => clamp(viewedPly, 0, moveHistory.length), [viewedPly, moveHistory.length]);
+  const viewingHistory = isGameStarted && clampedViewedPly < moveHistory.length;
+  const displayedMoveHistory = useMemo(
+    () => moveHistory.slice(0, clampedViewedPly),
+    [moveHistory, clampedViewedPly]
+  );
+  const displayedBoard = useMemo(
+    () => replayBoardFromMoves(displayedMoveHistory, sessionStartFen) || new Chess(game.fen()),
+    [displayedMoveHistory, sessionStartFen, game]
+  );
+  const turnLabel = useMemo(() => (displayedBoard.turn() === 'w' ? 'White' : 'Black'), [displayedBoard]);
   const playerTurn = game.turn() === activePlayerColor;
   const engineColor = activePlayerColor === 'w' ? 'b' : 'w';
   const randomFenMode = gameMode === 'random-fen';
@@ -598,14 +614,15 @@ export default function App() {
   const resultMessage = resultOverrideMessage || (game.isGameOver() ? getGameResultMessage(game) : '');
   const engineThinking = isGameStarted
     && !effectiveGameOver
+    && !viewingHistory
     && isProcessing
     && (randomFenMode || puzzleMode || freeplayMode || game.turn() === engineColor);
   const boardOrientation = useMemo(() => {
     if (autoFlipBoard && isGameStarted) {
-      return game.turn() === 'w' ? 'white' : 'black';
+      return displayedBoard.turn() === 'w' ? 'white' : 'black';
     }
     return manualBoardOrientation;
-  }, [autoFlipBoard, isGameStarted, game, manualBoardOrientation]);
+  }, [autoFlipBoard, isGameStarted, displayedBoard, manualBoardOrientation]);
 
   const turnDisplay = useMemo(() => {
     if (!isGameStarted) {
@@ -613,6 +630,9 @@ export default function App() {
     }
     if (effectiveGameOver) {
       return 'Game over';
+    }
+    if (viewingHistory) {
+      return `Reviewing move ${clampedViewedPly}/${moveHistory.length} (${turnLabel} to move)`;
     }
     if (freeplayMode || puzzleMode) {
       return `${turnLabel} to move`;
@@ -624,7 +644,7 @@ export default function App() {
       return `${turnLabel} to move`;
     }
     return `${turnLabel} to move (Engine)`;
-  }, [isGameStarted, effectiveGameOver, game, playerTurn, turnLabel, randomFenMode, freeplayMode, puzzleMode]);
+  }, [isGameStarted, effectiveGameOver, viewingHistory, clampedViewedPly, moveHistory.length, playerTurn, turnLabel, randomFenMode, freeplayMode, puzzleMode]);
   const scorePercent = useMemo(() => {
     if (!score.possible) {
       return 0;
@@ -738,6 +758,39 @@ export default function App() {
     return map;
   }, [playerMoveMeta]);
 
+  const replayBestMoveArrow = useMemo(() => {
+    if (!viewingHistory || clampedViewedPly < 1) {
+      return null;
+    }
+
+    const meta = playerMetaByPly.get(clampedViewedPly);
+    const bestMoveUci = String(meta?.bestMoveUci || '');
+    if (!bestMoveUci || !/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(bestMoveUci)) {
+      return null;
+    }
+
+    const playedMove = moveHistory[clampedViewedPly - 1];
+    if (!playedMove || toMoveString(playedMove) === bestMoveUci) {
+      return null;
+    }
+
+    return [bestMoveUci.slice(0, 2), bestMoveUci.slice(2, 4), 'rgb(255,170,0)'];
+  }, [viewingHistory, clampedViewedPly, playerMetaByPly, moveHistory]);
+
+  const displayArrows = useMemo(() => {
+    const arrows = Array.isArray(drawnArrows) ? [...drawnArrows] : [];
+    if (!replayBestMoveArrow) {
+      return arrows;
+    }
+
+    const [from, to] = replayBestMoveArrow;
+    const exists = arrows.some((arrow) => Array.isArray(arrow) && arrow[0] === from && arrow[1] === to);
+    if (!exists) {
+      arrows.push(replayBestMoveArrow);
+    }
+    return arrows;
+  }, [drawnArrows, replayBestMoveArrow]);
+
   const moveRows = useMemo(() => {
     const rows = [];
 
@@ -762,7 +815,7 @@ export default function App() {
     const capturedByWhite = [];
     const capturedByBlack = [];
 
-    for (const move of moveHistory) {
+    for (const move of displayedMoveHistory) {
       if (!move?.captured) {
         continue;
       }
@@ -780,7 +833,7 @@ export default function App() {
     }
 
     return { capturedByWhite, capturedByBlack };
-  }, [moveHistory]);
+  }, [displayedMoveHistory]);
 
   const currentOpening = useMemo(() => {
     if (randomFenMode || puzzleMode || !moveHistory.length) {
@@ -1272,15 +1325,27 @@ export default function App() {
   }, [moveRows.length]);
 
   useEffect(() => {
+    const previousLen = previousMoveHistoryLenRef.current;
+    setViewedPly((prev) => (prev === previousLen ? moveHistory.length : Math.min(prev, moveHistory.length)));
+    previousMoveHistoryLenRef.current = moveHistory.length;
     setRightClickedSquares({});
+    setDrawnArrows([]);
   }, [moveHistory.length]);
+
+  useEffect(() => {
+    if (!viewingHistory) {
+      return;
+    }
+    setSelectedSquare('');
+    setDragSourceSquare('');
+  }, [viewingHistory]);
 
   const selectedSquareStyles = useMemo(() => {
     const styles = { ...rightClickedSquares, ...errorSquareStyles };
     const sourceSquare = dragSourceSquare || selectedSquare;
 
     if (showValidMoves && sourceSquare) {
-      const validTargets = game.moves({ square: sourceSquare, verbose: true });
+      const validTargets = displayedBoard.moves({ square: sourceSquare, verbose: true });
       for (const move of validTargets) {
         styles[move.to] = {
           backgroundImage: VALID_MOVE_DOT,
@@ -1298,7 +1363,7 @@ export default function App() {
       };
     }
     return styles;
-  }, [selectedSquare, dragSourceSquare, rightClickedSquares, errorSquareStyles, showValidMoves, game]);
+  }, [selectedSquare, dragSourceSquare, rightClickedSquares, errorSquareStyles, showValidMoves, displayedBoard]);
 
   const flashInvalidMoveSquares = (sourceSquare, targetSquare) => {
     for (const timeoutId of invalidFlashTimeoutsRef.current) {
@@ -1389,6 +1454,7 @@ export default function App() {
     }
 
     setGame(new Chess());
+    setSessionStartFen(START_FEN);
     setIsGameStarted(false);
     setResultOverrideMessage('');
     setCurrentTopMoves([]);
@@ -1403,6 +1469,7 @@ export default function App() {
     setScore({ earned: 0, possible: 0, errors: 0 });
     setErrorSquareStyles({});
     setRightClickedSquares({});
+    setDrawnArrows([]);
     setActivePlayerColor('w');
     setManualBoardOrientation('white');
     setAwaitingNextRandomFen(false);
@@ -1546,6 +1613,7 @@ export default function App() {
     setCurrentPuzzlePlayerMoveCount(playerMoveCount);
     setCurrentPuzzlePendingScore(0);
     setAwaitingNextPuzzle(false);
+    setSessionStartFen(puzzle.fen);
     setGame(new Chess(board.fen()));
     setActivePlayerColor(puzzleSide);
     setManualBoardOrientation(puzzleSide === 'w' ? 'white' : 'black');
@@ -1558,6 +1626,7 @@ export default function App() {
     setDragSourceSquare('');
     setErrorSquareStyles({});
     setRightClickedSquares({});
+    setDrawnArrows([]);
     setStatus(statusMessage || `Puzzle loaded${puzzleTheme !== 'random' ? ` (${puzzleTheme})` : ''}.`);
   };
 
@@ -1569,11 +1638,13 @@ export default function App() {
     });
     const seedHistory = board.history({ verbose: true });
 
+    setSessionStartFen(START_FEN);
     setGame(new Chess(board.fen()));
     setSelectedSquare('');
     setDragSourceSquare('');
     setErrorSquareStyles({});
     setRightClickedSquares({});
+    setDrawnArrows([]);
     setMoveHistory(seedHistory);
     setPlayerMoveMeta([]);
     setCurrentTopMoves([]);
@@ -1674,6 +1745,7 @@ export default function App() {
       playerColor === 'random' ? (Math.random() < 0.5 ? 'w' : 'b') : playerColor;
     const board = new Chess();
     setGame(board);
+    setSessionStartFen(START_FEN);
     setIsGameStarted(true);
     setResultOverrideMessage('');
     setActivePlayerColor(chosenColor);
@@ -1688,6 +1760,7 @@ export default function App() {
     setScore({ earned: 0, possible: 0, errors: 0 });
     setErrorSquareStyles({});
     setRightClickedSquares({});
+    setDrawnArrows([]);
     setIsProcessing(true);
     setRandomPositionsCompleted(0);
     setCurrentSessionSaved(false);
@@ -1758,6 +1831,11 @@ export default function App() {
 
     if (isProcessing) {
       setStatus('Engine is thinking. Please wait.');
+      return false;
+    }
+
+    if (viewingHistory) {
+      setStatus('Review mode active. Click Latest in Move List to continue playing.');
       return false;
     }
 
@@ -1915,7 +1993,8 @@ export default function App() {
             rank: rank || null,
             label: rankText || `Outside Top ${topN}`,
             points: earnedPoints,
-            bestMove
+            bestMove,
+            bestMoveUci: currentTopMoves[0] || ''
           }
         ]);
       }
@@ -1982,7 +2061,8 @@ export default function App() {
             label: 'Common Opening Allowed',
             points: 0,
             openingAllowed: true,
-            bestMove
+            bestMove,
+            bestMoveUci: currentTopMoves[0] || ''
           }
         ]);
 
@@ -2042,7 +2122,8 @@ export default function App() {
         rank,
         label: rankText,
         points: earnedPoints,
-        bestMove
+        bestMove,
+        bestMoveUci: currentTopMoves[0] || ''
       }
     ]);
 
@@ -2172,8 +2253,13 @@ export default function App() {
       return;
     }
 
-    const piece = game.get(square);
-    const selectableColor = freeplayMode ? game.turn() : activePlayerColor;
+    if (viewingHistory) {
+      setStatus('Review mode active. Click Latest in Move List to continue playing.');
+      return;
+    }
+
+    const piece = displayedBoard.get(square);
+    const selectableColor = freeplayMode ? displayedBoard.turn() : activePlayerColor;
 
     if (!selectedSquare) {
       if (piece && piece.color === selectableColor) {
@@ -2195,7 +2281,7 @@ export default function App() {
       return;
     }
 
-    const selectedPiece = game.get(selectedSquare);
+    const selectedPiece = displayedBoard.get(selectedSquare);
     if (
       selectedPiece?.type === 'p' &&
       ((selectedPiece.color === 'w' && square.endsWith('8')) ||
@@ -2234,6 +2320,22 @@ export default function App() {
         }
       };
     });
+  };
+
+  const goToFirstMove = () => {
+    setViewedPly(0);
+  };
+
+  const goToPreviousMove = () => {
+    setViewedPly((prev) => Math.max(0, prev - 1));
+  };
+
+  const goToNextMove = () => {
+    setViewedPly((prev) => Math.min(moveHistory.length, prev + 1));
+  };
+
+  const goToLatestMove = () => {
+    setViewedPly(moveHistory.length);
   };
 
   return (
@@ -2286,13 +2388,20 @@ export default function App() {
         <div className="board-area" onContextMenu={(e) => e.preventDefault()}>
           <Chessboard
             id="trainer-board"
-            position={game.fen() || START_FEN}
+            position={displayedBoard.fen() || START_FEN}
+            customDndBackend={TouchBackend}
+            customDndBackendOptions={{
+              enableMouseEvents: true,
+              touchSlop: DRAG_START_SLOP_PX
+            }}
             onPieceDragBegin={onPieceDragBegin}
             onPieceDragEnd={onPieceDragEnd}
             onPieceDrop={onDrop}
             onPromotionPieceSelect={onPromotionPieceSelect}
             onSquareClick={onSquareClick}
             onSquareRightClick={onSquareRightClick}
+            onArrowsChange={setDrawnArrows}
+            customArrows={displayArrows}
             customSquareStyles={selectedSquareStyles}
             customLightSquareStyle={{ backgroundColor: chessboardTheme.light }}
             customDarkSquareStyle={{ backgroundColor: chessboardTheme.dark }}
@@ -2301,7 +2410,7 @@ export default function App() {
             customPieces={customPieces}
             boardWidth={boardWidth}
             boardOrientation={boardOrientation}
-            arePiecesDraggable={isGameStarted && !isProcessing && !effectiveGameOver && (freeplayMode || puzzleMode || playerTurn)}
+            arePiecesDraggable={isGameStarted && !viewingHistory && !isProcessing && !effectiveGameOver && (freeplayMode || puzzleMode || playerTurn)}
           />
         </div>
       </main>
@@ -2685,6 +2794,45 @@ export default function App() {
           </div>
           {!collapsedPanels.moves ? (
             <>
+              <div className="move-nav">
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={goToFirstMove}
+                  disabled={!moveHistory.length || clampedViewedPly === 0}
+                >
+                  First
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={goToPreviousMove}
+                  disabled={!moveHistory.length || clampedViewedPly === 0}
+                >
+                  Back
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={goToNextMove}
+                  disabled={!moveHistory.length || clampedViewedPly >= moveHistory.length}
+                >
+                  Forward
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={goToLatestMove}
+                  disabled={!moveHistory.length || clampedViewedPly >= moveHistory.length}
+                >
+                  Latest
+                </button>
+              </div>
+              <p className="move-review-note">
+                {moveHistory.length
+                  ? `Viewing ply ${clampedViewedPly}/${moveHistory.length}${viewingHistory ? ' (review mode: moves locked)' : ''}`
+                  : 'No moves yet.'}
+              </p>
               {moveRows.length ? (
                 <div className="move-list" ref={moveListRef}>
                   <div className="move-row move-head" style={{ gridTemplateColumns: moveRowTemplate }}>
@@ -2694,8 +2842,12 @@ export default function App() {
                     <span className={resolvedPlayerColor === 'b' ? 'player-col' : ''}>{blackHeaderLabel}</span>
                     {showBlackRankColumn ? <span>Rank</span> : null}
                   </div>
-                  {moveRows.map((row) => (
-                    <div className="move-row" key={row.moveNumber} style={{ gridTemplateColumns: moveRowTemplate }}>
+                  {moveRows.map((row) => {
+                    const rowStartPly = (row.moveNumber - 1) * 2 + 1;
+                    const rowEndPly = row.black ? rowStartPly + 1 : rowStartPly;
+                    const rowIsActive = clampedViewedPly >= rowStartPly && clampedViewedPly <= rowEndPly;
+                    return (
+                    <div className={`move-row${rowIsActive ? ' move-row-active' : ''}`} key={row.moveNumber} style={{ gridTemplateColumns: moveRowTemplate }}>
                       <span className="move-num">{row.moveNumber}.</span>
                       <span className={resolvedPlayerColor === 'w' ? 'player-col' : ''}>
                         {row.white ? row.white.san : '-'}
@@ -2706,10 +2858,11 @@ export default function App() {
                       </span>
                       {showBlackRankColumn ? <span className="move-meta">{formatMoveMetaDisplay(row.blackMeta)}</span> : null}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
-                <p>No moves yet.</p>
+                null
               )}
             </>
           ) : null}

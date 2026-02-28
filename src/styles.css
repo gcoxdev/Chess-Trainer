@@ -520,11 +520,34 @@ h2 {
   font-size: 0.9rem;
 }
 
+.move-nav {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.4rem;
+  margin-bottom: 0.45rem;
+}
+
+.move-nav .secondary {
+  width: 100%;
+  padding: 0.3rem 0.2rem;
+}
+
+.move-review-note {
+  margin: 0 0 0.45rem;
+  font-size: 0.82rem;
+  color: #4c5f74;
+}
+
 .move-row {
   display: grid;
   grid-template-columns: 36px minmax(0, 1fr) minmax(90px, 0.8fr) minmax(0, 1fr) minmax(90px, 0.8fr);
   gap: 0.45rem;
   align-items: center;
+}
+
+.move-row-active {
+  background: rgba(255, 220, 94, 0.25);
+  border-radius: 4px;
 }
 
 .move-num {
