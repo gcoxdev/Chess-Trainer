@@ -506,6 +506,7 @@ export default function App() {
   const [playerMoveMeta, setPlayerMoveMeta] = useState([]);
   const [moveHistory, setMoveHistory] = useState([]);
   const [errorSquareStyles, setErrorSquareStyles] = useState({});
+  const [rightClickedSquares, setRightClickedSquares] = useState({});
   const [showValidMoves, setShowValidMoves] = useState(true);
   const [score, setScore] = useState({ earned: 0, possible: 0, errors: 0 });
   const [awaitingNextRandomFen, setAwaitingNextRandomFen] = useState(false);
@@ -1270,8 +1271,12 @@ export default function App() {
     moveListRef.current.scrollTop = moveListRef.current.scrollHeight;
   }, [moveRows.length]);
 
+  useEffect(() => {
+    setRightClickedSquares({});
+  }, [moveHistory.length]);
+
   const selectedSquareStyles = useMemo(() => {
-    const styles = { ...errorSquareStyles };
+    const styles = { ...rightClickedSquares, ...errorSquareStyles };
     const sourceSquare = dragSourceSquare || selectedSquare;
 
     if (showValidMoves && sourceSquare) {
@@ -1293,7 +1298,7 @@ export default function App() {
       };
     }
     return styles;
-  }, [selectedSquare, dragSourceSquare, errorSquareStyles, showValidMoves, game]);
+  }, [selectedSquare, dragSourceSquare, rightClickedSquares, errorSquareStyles, showValidMoves, game]);
 
   const flashInvalidMoveSquares = (sourceSquare, targetSquare) => {
     for (const timeoutId of invalidFlashTimeoutsRef.current) {
@@ -1397,6 +1402,7 @@ export default function App() {
     setMoveHistory([]);
     setScore({ earned: 0, possible: 0, errors: 0 });
     setErrorSquareStyles({});
+    setRightClickedSquares({});
     setActivePlayerColor('w');
     setManualBoardOrientation('white');
     setAwaitingNextRandomFen(false);
@@ -1551,6 +1557,7 @@ export default function App() {
     setSelectedSquare('');
     setDragSourceSquare('');
     setErrorSquareStyles({});
+    setRightClickedSquares({});
     setStatus(statusMessage || `Puzzle loaded${puzzleTheme !== 'random' ? ` (${puzzleTheme})` : ''}.`);
   };
 
@@ -1566,6 +1573,7 @@ export default function App() {
     setSelectedSquare('');
     setDragSourceSquare('');
     setErrorSquareStyles({});
+    setRightClickedSquares({});
     setMoveHistory(seedHistory);
     setPlayerMoveMeta([]);
     setCurrentTopMoves([]);
@@ -1679,6 +1687,7 @@ export default function App() {
     setMoveHistory([]);
     setScore({ earned: 0, possible: 0, errors: 0 });
     setErrorSquareStyles({});
+    setRightClickedSquares({});
     setIsProcessing(true);
     setRandomPositionsCompleted(0);
     setCurrentSessionSaved(false);
@@ -2202,6 +2211,31 @@ export default function App() {
     }
   };
 
+  const onSquareRightClick = (square) => {
+    if (!square || !/^[a-h][1-8]$/.test(square)) {
+      return;
+    }
+    if (!isGameStarted || effectiveGameOver) {
+      return;
+    }
+
+    setRightClickedSquares((prev) => {
+      if (prev[square]) {
+        const next = { ...prev };
+        delete next[square];
+        return next;
+      }
+
+      return {
+        ...prev,
+        [square]: {
+          backgroundColor: 'rgba(215, 38, 61, 0.58)',
+          boxShadow: 'inset 0 0 0 6px rgba(165, 18, 36, 0.92)'
+        }
+      };
+    });
+  };
+
   return (
     <div className="app">
       <div className="board-status" ref={boardStatusRef}>
@@ -2249,7 +2283,7 @@ export default function App() {
       </div>
 
       <main className="board-wrap" ref={boardWrapRef}>
-        <div className="board-area">
+        <div className="board-area" onContextMenu={(e) => e.preventDefault()}>
           <Chessboard
             id="trainer-board"
             position={game.fen() || START_FEN}
@@ -2258,6 +2292,7 @@ export default function App() {
             onPieceDrop={onDrop}
             onPromotionPieceSelect={onPromotionPieceSelect}
             onSquareClick={onSquareClick}
+            onSquareRightClick={onSquareRightClick}
             customSquareStyles={selectedSquareStyles}
             customLightSquareStyle={{ backgroundColor: chessboardTheme.light }}
             customDarkSquareStyle={{ backgroundColor: chessboardTheme.dark }}
