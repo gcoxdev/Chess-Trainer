@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Chess } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
 import { TouchBackend } from 'react-dnd-touch-backend';
@@ -38,6 +38,41 @@ function formatScoreValue(value) {
   const n = Number(value || 0);
   if (Number.isInteger(n)) return String(n);
   return n.toFixed(2).replace(/\.?0+$/, '');
+}
+
+function formatElapsedSeconds(ms) {
+  return `${Math.max(0, Math.round((ms || 0) / 1000))}s`;
+}
+
+function formatDurationMs(ms) {
+  const totalSeconds = Math.max(0, Math.round((ms || 0) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+function getTimeScoreFactor(elapsedMs) {
+  const elapsedSeconds = Math.max(0, (elapsedMs || 0) / 1000);
+  const graceSeconds = 3;
+  if (elapsedSeconds <= graceSeconds) {
+    return 1;
+  }
+
+  // After a short grace period, points decay smoothly with a 20s half-life.
+  const decaySeconds = elapsedSeconds - graceSeconds;
+  const factor = Math.pow(0.5, decaySeconds / 20);
+  return clamp(factor, 0.25, 1);
+}
+
+function historyBucketKey(baseKey, scoreMode) {
+  return `${baseKey}|${scoreMode}`;
+}
+
+function formatTimedPointsSuffix({ useTimeScoring, elapsedMs, timeFactor }) {
+  if (!useTimeScoring) {
+    return '';
+  }
+  return ` (time x${formatScoreValue(timeFactor)}, ${formatElapsedSeconds(elapsedMs)})`;
 }
 
 function approximateEloForSkillLevel(level) {
@@ -488,6 +523,7 @@ export default function App() {
   const [randomFenPhase, setRandomFenPhase] = useState('random');
   const [puzzleTheme, setPuzzleTheme] = useState('random');
   const [freeplayAnalyzeMoves, setFreeplayAnalyzeMoves] = useState(true);
+  const [useTimeScoring, setUseTimeScoring] = useState(false);
   const [allowCommonOpenings, setAllowCommonOpenings] = useState(false);
   const [playerColor, setPlayerColor] = useState('w');
   const [boardStyle, setBoardStyle] = useState('classic');
@@ -513,6 +549,9 @@ export default function App() {
   const [rightClickedSquares, setRightClickedSquares] = useState({});
   const [drawnArrows, setDrawnArrows] = useState([]);
   const [showValidMoves, setShowValidMoves] = useState(true);
+  const [playerTurnStartedAt, setPlayerTurnStartedAt] = useState(0);
+  const [totalTimedMoveMs, setTotalTimedMoveMs] = useState(0);
+  const [liveTimedTurnMs, setLiveTimedTurnMs] = useState(0);
   const [score, setScore] = useState({ earned: 0, possible: 0, errors: 0 });
   const [awaitingNextRandomFen, setAwaitingNextRandomFen] = useState(false);
   const [randomPositionsCompleted, setRandomPositionsCompleted] = useState(0);
@@ -604,7 +643,42 @@ export default function App() {
   const randomFenMode = gameMode === 'random-fen';
   const puzzleMode = gameMode === 'puzzle';
   const freeplayMode = gameMode === 'freeplay';
+  const scoreModeKey = useTimeScoring ? 'timed' : 'standard';
+  const scoreModeLabel = useTimeScoring ? 'Timed' : 'Standard';
+  const classicHistoryKey = historyBucketKey(String(engineSkillLevel), scoreModeKey);
+  const randomHistoryKey = historyBucketKey(String(randomFenPhase), scoreModeKey);
+  const puzzleHistoryKey = historyBucketKey(String(puzzleTheme), scoreModeKey);
   const effectiveGameOver = game.isGameOver() || Boolean(resultOverrideMessage);
+  const timedScoringTurnActive = useMemo(
+    () => (
+      useTimeScoring
+      && isGameStarted
+      && !freeplayMode
+      && !effectiveGameOver
+      && !viewingHistory
+      && !isProcessing
+      && !awaitingNextRandomFen
+      && !awaitingNextPuzzle
+      && playerTurn
+      && playerTurnStartedAt > 0
+    ),
+    [
+      useTimeScoring,
+      isGameStarted,
+      freeplayMode,
+      effectiveGameOver,
+      viewingHistory,
+      isProcessing,
+      awaitingNextRandomFen,
+      awaitingNextPuzzle,
+      playerTurn,
+      playerTurnStartedAt
+    ]
+  );
+  const displayedTotalTimedMs = useMemo(
+    () => totalTimedMoveMs + (timedScoringTurnActive ? liveTimedTurnMs : 0),
+    [totalTimedMoveMs, timedScoringTurnActive, liveTimedTurnMs]
+  );
   const settingsLocked = isGameStarted;
   const resolvedPlayerColor = freeplayMode
     ? null
@@ -670,18 +744,36 @@ export default function App() {
   }, [scoreHistory]);
 
   const classicHistoryForSelectedSkill = useMemo(
-    () => scoreHistory.classicBySkill?.[String(engineSkillLevel)] ?? [],
-    [scoreHistory, engineSkillLevel]
+    () => {
+      const buckets = scoreHistory.classicBySkill || {};
+      if (scoreModeKey === 'standard') {
+        return buckets[classicHistoryKey] ?? buckets[String(engineSkillLevel)] ?? [];
+      }
+      return buckets[classicHistoryKey] ?? [];
+    },
+    [scoreHistory, engineSkillLevel, scoreModeKey, classicHistoryKey]
   );
 
   const randomHistoryForSelectedPhase = useMemo(
-    () => scoreHistory.randomByPhase?.[String(randomFenPhase)] ?? [],
-    [scoreHistory, randomFenPhase]
+    () => {
+      const buckets = scoreHistory.randomByPhase || {};
+      if (scoreModeKey === 'standard') {
+        return buckets[randomHistoryKey] ?? buckets[String(randomFenPhase)] ?? [];
+      }
+      return buckets[randomHistoryKey] ?? [];
+    },
+    [scoreHistory, randomFenPhase, scoreModeKey, randomHistoryKey]
   );
 
   const puzzleHistoryForSelectedTheme = useMemo(
-    () => scoreHistory.puzzleByTheme?.[String(puzzleTheme)] ?? [],
-    [scoreHistory, puzzleTheme]
+    () => {
+      const buckets = scoreHistory.puzzleByTheme || {};
+      if (scoreModeKey === 'standard') {
+        return buckets[puzzleHistoryKey] ?? buckets[String(puzzleTheme)] ?? [];
+      }
+      return buckets[puzzleHistoryKey] ?? [];
+    },
+    [scoreHistory, puzzleTheme, scoreModeKey, puzzleHistoryKey]
   );
 
   const bestClassicScore = useMemo(() => {
@@ -749,6 +841,21 @@ export default function App() {
       // surfaced when mode starts/loads puzzle
     });
   }, [puzzleMode, puzzleManifest]);
+
+  useEffect(() => {
+    if (!timedScoringTurnActive) {
+      setLiveTimedTurnMs(0);
+      return;
+    }
+
+    const tick = () => {
+      setLiveTimedTurnMs(Math.max(0, Date.now() - playerTurnStartedAt));
+    };
+
+    tick();
+    const intervalId = setInterval(tick, 200);
+    return () => clearInterval(intervalId);
+  }, [timedScoringTurnActive, playerTurnStartedAt]);
 
   const playerMetaByPly = useMemo(() => {
     const map = new Map();
@@ -1324,7 +1431,7 @@ export default function App() {
     moveListRef.current.scrollTop = moveListRef.current.scrollHeight;
   }, [moveRows.length]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const previousLen = previousMoveHistoryLenRef.current;
     setViewedPly((prev) => (prev === previousLen ? moveHistory.length : Math.min(prev, moveHistory.length)));
     previousMoveHistoryLenRef.current = moveHistory.length;
@@ -1417,7 +1524,7 @@ export default function App() {
         ...prev,
         randomByPhase: {
           ...(prev.randomByPhase || {}),
-          [String(randomFenPhase)]: [
+          [randomHistoryKey]: [
             {
               earned: score.earned,
               possible: score.possible,
@@ -1425,9 +1532,11 @@ export default function App() {
               positions: randomPositionsCompleted,
               topN,
               timestamp: Date.now(),
-              phase: randomFenPhase
+              phase: randomFenPhase,
+              scoreMode: scoreModeKey,
+              totalMoveTimeMs: totalTimedMoveMs
             },
-            ...((prev.randomByPhase?.[String(randomFenPhase)] ?? []))
+            ...((prev.randomByPhase?.[randomHistoryKey] ?? []))
           ].slice(0, 100)
         }
       }));
@@ -1438,16 +1547,18 @@ export default function App() {
         ...prev,
         puzzleByTheme: {
           ...(prev.puzzleByTheme || {}),
-          [String(puzzleTheme)]: [
+          [puzzleHistoryKey]: [
             {
               earned: score.earned,
               possible: score.possible,
               percent,
               puzzles: puzzlesCompleted,
               timestamp: Date.now(),
-              theme: puzzleTheme
+              theme: puzzleTheme,
+              scoreMode: scoreModeKey,
+              totalMoveTimeMs: totalTimedMoveMs
             },
-            ...((prev.puzzleByTheme?.[String(puzzleTheme)] ?? []))
+            ...((prev.puzzleByTheme?.[puzzleHistoryKey] ?? []))
           ].slice(0, 100)
         }
       }));
@@ -1481,6 +1592,9 @@ export default function App() {
     setRandomPositionsCompleted(0);
     setPuzzlesCompleted(0);
     setCurrentSessionSaved(false);
+    setPlayerTurnStartedAt(0);
+    setTotalTimedMoveMs(0);
+    setLiveTimedTurnMs(0);
   };
 
   const finishGame = (board, scoreSnapshot = score, options = {}) => {
@@ -1514,16 +1628,18 @@ export default function App() {
         ...prev,
         classicBySkill: {
           ...(prev.classicBySkill || {}),
-          [String(engineSkillLevel)]: [
+          [classicHistoryKey]: [
             {
               earned: scoreSnapshot.earned,
               possible: scoreSnapshot.possible,
               percent: percentValue,
               topN,
               timestamp: Date.now(),
-              skillLevel: engineSkillLevel
+              skillLevel: engineSkillLevel,
+              scoreMode: scoreModeKey,
+              totalMoveTimeMs: totalTimedMoveMs
             },
-            ...((prev.classicBySkill?.[String(engineSkillLevel)] ?? []))
+            ...((prev.classicBySkill?.[classicHistoryKey] ?? []))
           ].slice(0, 100)
         }
       }));
@@ -1628,6 +1744,7 @@ export default function App() {
     setRightClickedSquares({});
     setDrawnArrows([]);
     setStatus(statusMessage || `Puzzle loaded${puzzleTheme !== 'random' ? ` (${puzzleTheme})` : ''}.`);
+    setPlayerTurnStartedAt(Date.now());
   };
 
   const loadRandomFenPosition = async (playerSide, statusMessage) => {
@@ -1652,6 +1769,7 @@ export default function App() {
 
     await preloadTopMoves(board.fen(), topN);
     setStatus(statusMessage || 'Random position loaded.');
+    setPlayerTurnStartedAt(Date.now());
   };
 
   const nextRandomFenPosition = async () => {
@@ -1730,6 +1848,7 @@ export default function App() {
 
     await preloadTopMoves(liveBoard.fen(), topN);
     setStatus(lastRankLabel);
+    setPlayerTurnStartedAt(Date.now());
     setIsProcessing(false);
   };
 
@@ -1764,6 +1883,9 @@ export default function App() {
     setIsProcessing(true);
     setRandomPositionsCompleted(0);
     setCurrentSessionSaved(false);
+    setPlayerTurnStartedAt(0);
+    setTotalTimedMoveMs(0);
+    setLiveTimedTurnMs(0);
 
     try {
       if (randomFenMode) {
@@ -1790,6 +1912,7 @@ export default function App() {
           setCurrentTopMoves([]);
           setStatus(`Freeplay started (${chosenColor === 'w' ? 'White' : 'Black'} orientation). Analysis off.`);
         }
+        setPlayerTurnStartedAt(Date.now());
         setIsProcessing(false);
         return;
       }
@@ -1811,6 +1934,7 @@ export default function App() {
 
       await preloadTopMoves(board.fen(), topN);
       setStatus(`Game started as ${chosenColor === 'w' ? 'White' : 'Black'}.`);
+      setPlayerTurnStartedAt(Date.now());
     } catch (e) {
       setStatus(e.message || 'Engine error while starting game.');
     }
@@ -1894,6 +2018,12 @@ export default function App() {
     const rank = (freeplayMode && !freeplayAnalyzeMoves) ? 0 : (currentTopMoves.indexOf(moveUci) + 1);
     const bestMove = bestMoveSanFromHistory(moveHistory, currentTopMoves[0]);
     const ply = moveHistory.length + 1;
+    const elapsedMs = playerTurnStartedAt ? Math.max(0, Date.now() - playerTurnStartedAt) : 0;
+    const timeFactor = useTimeScoring ? getTimeScoreFactor(elapsedMs) : 1;
+    const timedMoveSuffix = useTimeScoring ? ` Time: ${formatElapsedSeconds(elapsedMs)}.` : '';
+    if (useTimeScoring && !freeplayMode) {
+      setTotalTimedMoveMs((prev) => prev + elapsedMs);
+    }
 
     if (puzzleMode) {
       const expectedMove = currentPuzzle?.moves?.[currentPuzzleMoveIndex];
@@ -1903,7 +2033,7 @@ export default function App() {
       }
 
       if (moveUci !== expectedMove) {
-        setStatus('Incorrect puzzle move.');
+        setStatus(`Incorrect puzzle move.${timedMoveSuffix}`);
         setSelectedSquare('');
         setDragSourceSquare('');
         flashInvalidMoveSquares(sourceSquare, targetSquare);
@@ -1923,10 +2053,12 @@ export default function App() {
           san: humanMove.san,
           rank: 1,
           label: 'Puzzle Move',
-          points: 1
+          points: timeFactor,
+          timeFactor,
+          elapsedMs
         }
       ]);
-      setCurrentPuzzlePendingScore((prev) => prev + 1);
+      setCurrentPuzzlePendingScore((prev) => prev + timeFactor);
 
       const nextIndex = currentPuzzleMoveIndex + 1;
       const totalMoves = currentPuzzle?.moves?.length ?? 0;
@@ -1941,7 +2073,7 @@ export default function App() {
         setCurrentPuzzlePendingScore(0);
         setAwaitingNextPuzzle(true);
         setPuzzlesCompleted((prev) => prev + 1);
-        setStatus('Puzzle solved. Click Next Puzzle.');
+        setStatus(`Puzzle solved.${timedMoveSuffix} Click Next Puzzle.`);
         return true;
       }
 
@@ -1971,17 +2103,19 @@ export default function App() {
         setCurrentPuzzlePendingScore(0);
         setAwaitingNextPuzzle(true);
         setPuzzlesCompleted((prev) => prev + 1);
-        setStatus('Puzzle solved. Click Next Puzzle.');
+        setStatus(`Puzzle solved.${timedMoveSuffix} Click Next Puzzle.`);
         return true;
       }
 
       const remaining = totalMoves - (nextIndex + 1);
-      setStatus(`Correct puzzle move. Opponent replied ${opponentMove.san}. ${remaining} move${remaining === 1 ? '' : 's'} remaining.`);
+      setStatus(`Correct puzzle move.${timedMoveSuffix} Opponent replied ${opponentMove.san}. ${remaining} move${remaining === 1 ? '' : 's'} remaining.`);
+      setPlayerTurnStartedAt(Date.now());
       return true;
     }
 
     if (freeplayMode) {
-      const earnedPoints = rank ? pointsForRank(rank, topN) : 0;
+      const basePoints = rank ? pointsForRank(rank, topN) : 0;
+      const earnedPoints = basePoints * timeFactor;
       const rankText = rank ? rankLabel(rank) : '';
 
       if (freeplayAnalyzeMoves) {
@@ -1994,7 +2128,9 @@ export default function App() {
             label: rankText || `Outside Top ${topN}`,
             points: earnedPoints,
             bestMove,
-            bestMoveUci: currentTopMoves[0] || ''
+            bestMoveUci: currentTopMoves[0] || '',
+            timeFactor,
+            elapsedMs
           }
         ]);
       }
@@ -2008,10 +2144,10 @@ export default function App() {
       setCurrentTopMoves([]);
 
       const moveStatus = !freeplayAnalyzeMoves
-        ? 'Freeplay move accepted.'
+        ? `Freeplay move accepted.${timedMoveSuffix}`
         : rank
-          ? `${rankText}. +${formatScoreValue(earnedPoints)} move score.`
-          : `Outside top ${topN}. Freeplay move accepted.`;
+          ? `${rankText}. +${formatScoreValue(earnedPoints)} move score.${formatTimedPointsSuffix({ useTimeScoring, elapsedMs, timeFactor })}${timedMoveSuffix}`
+          : `Outside top ${topN}. Freeplay move accepted.${timedMoveSuffix}`;
 
       if (testGame.isThreefoldRepetition()) {
         finishGame(testGame, score, {
@@ -2029,6 +2165,7 @@ export default function App() {
 
       if (!freeplayAnalyzeMoves) {
         setStatus(moveStatus);
+        setPlayerTurnStartedAt(Date.now());
         return true;
       }
 
@@ -2037,6 +2174,7 @@ export default function App() {
         try {
           await preloadTopMoves(testGame.fen(), topN);
           setStatus(moveStatus);
+          setPlayerTurnStartedAt(Date.now());
         } catch (e) {
           setStatus(e.message || 'Engine error while analyzing freeplay move.');
         } finally {
@@ -2089,7 +2227,7 @@ export default function App() {
         return true;
       }
 
-      setStatus(`Move rejected. Not in top ${topN}.`);
+      setStatus(`Move rejected. Not in top ${topN}.${timedMoveSuffix}`);
       setLastEvaluatedMoves(currentTopMoves);
       setShowLastEvaluated(false);
       setSelectedSquare('');
@@ -2099,7 +2237,8 @@ export default function App() {
       return false;
     }
 
-    const earnedPoints = pointsForRank(rank, topN);
+    const basePoints = pointsForRank(rank, topN);
+    const earnedPoints = basePoints * timeFactor;
     const rankText = rankLabel(rank);
 
     const projectedScore = {
@@ -2123,7 +2262,9 @@ export default function App() {
         label: rankText,
         points: earnedPoints,
         bestMove,
-        bestMoveUci: currentTopMoves[0] || ''
+        bestMoveUci: currentTopMoves[0] || '',
+        timeFactor,
+        elapsedMs
       }
     ]);
 
@@ -2146,17 +2287,18 @@ export default function App() {
     }
 
     setIsProcessing(true);
-    setStatus(`${rankText}. +${formatScoreValue(earnedPoints)} points.`);
+    const timedPointsSuffix = formatTimedPointsSuffix({ useTimeScoring, elapsedMs, timeFactor });
+    setStatus(`${rankText}. +${formatScoreValue(earnedPoints)} points.${timedPointsSuffix}${timedMoveSuffix}`);
 
     if (randomFenMode) {
       setRandomPositionsCompleted((prev) => prev + 1);
       setAwaitingNextRandomFen(true);
       setIsProcessing(false);
-      setStatus(`${rankText}. +${formatScoreValue(earnedPoints)} points. Click Next Position.`);
+      setStatus(`${rankText}. +${formatScoreValue(earnedPoints)} points.${timedPointsSuffix}${timedMoveSuffix} Click Next Position.`);
       return true;
     }
 
-    void applyEngineReply(testGame, `${rankText}. +${formatScoreValue(earnedPoints)} points`, projectedScore, [...moveHistory, humanMove]);
+    void applyEngineReply(testGame, `${rankText}. +${formatScoreValue(earnedPoints)} points${timedPointsSuffix}`, projectedScore, [...moveHistory, humanMove]);
     return true;
   };
 
@@ -2188,10 +2330,10 @@ export default function App() {
 
   const clearActiveScoreHistory = () => {
     const confirmMessage = puzzleMode
-      ? `Clear Puzzle score history and top score for theme ${puzzleTheme}?`
+      ? `Clear Puzzle score history and top score for theme ${puzzleTheme} (${scoreModeLabel})?`
       : randomFenMode
-        ? `Clear Random Position score history and top score for ${randomFenPhase === 'random' ? 'Random' : randomFenPhase} phase?`
-        : `Clear Classic score history and top score for Skill Level ${engineSkillLevel}?`;
+        ? `Clear Random Position score history and top score for ${randomFenPhase === 'random' ? 'Random' : randomFenPhase} phase (${scoreModeLabel})?`
+        : `Clear Classic score history and top score for Skill Level ${engineSkillLevel} (${scoreModeLabel})?`;
 
     if (!window.confirm(confirmMessage)) {
       return;
@@ -2200,27 +2342,36 @@ export default function App() {
     setScoreHistory((prev) => {
       if (randomFenMode) {
         const nextRandomByPhase = { ...(prev.randomByPhase || {}) };
-        delete nextRandomByPhase[String(randomFenPhase)];
+        delete nextRandomByPhase[randomHistoryKey];
+        if (scoreModeKey === 'standard') {
+          delete nextRandomByPhase[String(randomFenPhase)];
+        }
         return { ...prev, randomByPhase: nextRandomByPhase };
       }
 
       if (puzzleMode) {
         const nextPuzzleByTheme = { ...(prev.puzzleByTheme || {}) };
-        delete nextPuzzleByTheme[String(puzzleTheme)];
+        delete nextPuzzleByTheme[puzzleHistoryKey];
+        if (scoreModeKey === 'standard') {
+          delete nextPuzzleByTheme[String(puzzleTheme)];
+        }
         return { ...prev, puzzleByTheme: nextPuzzleByTheme };
       }
 
       const nextClassicBySkill = { ...(prev.classicBySkill || {}) };
-      delete nextClassicBySkill[String(engineSkillLevel)];
+      delete nextClassicBySkill[classicHistoryKey];
+      if (scoreModeKey === 'standard') {
+        delete nextClassicBySkill[String(engineSkillLevel)];
+      }
       return { ...prev, classicBySkill: nextClassicBySkill };
     });
     setShowScoreHistory(false);
     setStatus(
       puzzleMode
-        ? `Puzzle history cleared for theme ${puzzleTheme}.`
+        ? `Puzzle history cleared for theme ${puzzleTheme} (${scoreModeLabel}).`
         : randomFenMode
-          ? `Random score history cleared for ${randomFenPhase === 'random' ? 'Random' : randomFenPhase} phase.`
-          : `Classic history cleared for skill level ${engineSkillLevel}.`
+          ? `Random score history cleared for ${randomFenPhase === 'random' ? 'Random' : randomFenPhase} phase (${scoreModeLabel}).`
+          : `Classic history cleared for skill level ${engineSkillLevel} (${scoreModeLabel}).`
     );
   };
 
@@ -2622,6 +2773,18 @@ export default function App() {
               />
             </label>
 
+            {!freeplayMode ? (
+              <label>
+                Time-Based Scoring
+                <input
+                  type="checkbox"
+                  checked={useTimeScoring}
+                  disabled={settingsLocked}
+                  onChange={(e) => setUseTimeScoring(e.target.checked)}
+                />
+              </label>
+            ) : null}
+
             {!isGameStarted ? (
               <button className="success-button" onClick={startGame} type="button" disabled={!ready || isProcessing}>
                 Start Game
@@ -2651,6 +2814,7 @@ export default function App() {
           <p><strong>Update:</strong> {status}</p>
           {!freeplayMode ? <p><strong>Current:</strong> {formatScoreValue(score.earned)} / {formatScoreValue(score.possible)} ({scorePercent}%)</p> : null}
           {!freeplayMode ? <p><strong>Mistakes:</strong> {score.errors}</p> : null}
+          {!freeplayMode && useTimeScoring ? <p><strong>Total Time:</strong> {formatDurationMs(displayedTotalTimedMs)}</p> : null}
           {!randomFenMode && !puzzleMode ? (
             <p><strong>Opening:</strong> {currentOpening?.label || '-'}</p>
           ) : null}
@@ -2658,12 +2822,15 @@ export default function App() {
           {puzzleMode ? <p><strong>Puzzles:</strong> {puzzlesCompleted}</p> : null}
           {puzzleMode ? <p><strong>Theme:</strong> {puzzleThemeDisplay}</p> : null}
           {freeplayMode ? <p><strong>Move Analysis:</strong> {freeplayAnalyzeMoves ? `Top ${topN} enabled` : 'Off'}</p> : null}
+          {!freeplayMode ? <p><strong>Score Mode:</strong> {scoreModeLabel}</p> : null}
           {!randomFenMode && !freeplayMode && !puzzleMode ? (
             bestClassicScore ? (
               <p>
                 <strong>Best Classic:</strong>{' '}
                 {formatScoreValue(Math.max(0, bestClassicScore.earned))} / {formatScoreValue(bestClassicScore.possible)} ({bestClassicScore.percent.toFixed(1)}%)
                 {bestClassicScore.topN ? ` [Top ${bestClassicScore.topN}]` : ''}
+                {bestClassicScore.scoreMode ? ` [${bestClassicScore.scoreMode === 'timed' ? 'Timed' : 'Standard'}]` : ''}
+                {typeof bestClassicScore.totalMoveTimeMs === 'number' ? ` [Time ${formatDurationMs(bestClassicScore.totalMoveTimeMs)}]` : ''}
               </p>
             ) : (
               <p><strong>Best Classic:</strong> -</p>
@@ -2675,6 +2842,8 @@ export default function App() {
                 {bestRandomSession.positions} positions, {formatScoreValue(Math.max(0, bestRandomSession.earned))} / {formatScoreValue(bestRandomSession.possible)} ({bestRandomSession.percent.toFixed(1)}%)
                 {bestRandomSession.topN ? `, Top ${bestRandomSession.topN}` : ''}
                 {` [${randomFenPhase === 'random' ? 'Random' : randomFenPhase}]`}
+                {bestRandomSession.scoreMode ? ` [${bestRandomSession.scoreMode === 'timed' ? 'Timed' : 'Standard'}]` : ''}
+                {typeof bestRandomSession.totalMoveTimeMs === 'number' ? ` [Time ${formatDurationMs(bestRandomSession.totalMoveTimeMs)}]` : ''}
               </p>
             ) : (
               <p><strong>Best Random:</strong> -</p>
@@ -2685,6 +2854,8 @@ export default function App() {
                 <strong>Best Puzzle:</strong>{' '}
                 {bestPuzzleSession.puzzles} puzzles, {formatScoreValue(Math.max(0, bestPuzzleSession.earned))} / {formatScoreValue(bestPuzzleSession.possible)} ({bestPuzzleSession.percent.toFixed(1)}%)
                 {` [${formatPuzzleThemeLabel(puzzleTheme)}]`}
+                {bestPuzzleSession.scoreMode ? ` [${bestPuzzleSession.scoreMode === 'timed' ? 'Timed' : 'Standard'}]` : ''}
+                {typeof bestPuzzleSession.totalMoveTimeMs === 'number' ? ` [Time ${formatDurationMs(bestPuzzleSession.totalMoveTimeMs)}]` : ''}
               </p>
             ) : (
               <p><strong>Best Puzzle:</strong> -</p>
@@ -2705,10 +2876,10 @@ export default function App() {
                 <div className="history-list-head">
                   <span className="history-list-title">
                     {puzzleMode
-                      ? `Puzzle History (${formatPuzzleThemeLabel(puzzleTheme)})`
+                      ? `Puzzle History (${formatPuzzleThemeLabel(puzzleTheme)}, ${scoreModeLabel})`
                       : randomFenMode
-                      ? `Random History (${randomFenPhase === 'random' ? 'Random' : randomFenPhase})`
-                      : `Classic History (Level ${engineSkillLevel})`}
+                      ? `Random History (${randomFenPhase === 'random' ? 'Random' : randomFenPhase}, ${scoreModeLabel})`
+                      : `Classic History (Level ${engineSkillLevel}, ${scoreModeLabel})`}
                   </span>
                   <button
                     type="button"
@@ -2734,10 +2905,10 @@ export default function App() {
                     <span className="history-rank">#{index + 1}</span>
                     <span className="history-main">
                       {puzzleMode
-                        ? `${entry.puzzles} puz, ${formatScoreValue(Math.max(0, entry.earned))}/${formatScoreValue(entry.possible)} (${entry.percent.toFixed(1)}%)`
+                        ? `${entry.puzzles} puz, ${formatScoreValue(Math.max(0, entry.earned))}/${formatScoreValue(entry.possible)} (${entry.percent.toFixed(1)}%)${typeof entry.totalMoveTimeMs === 'number' ? `, Time ${formatDurationMs(entry.totalMoveTimeMs)}` : ''}`
                         : randomFenMode
-                        ? `${entry.positions} pos, ${formatScoreValue(Math.max(0, entry.earned))}/${formatScoreValue(entry.possible)} (${entry.percent.toFixed(1)}%)${entry.topN ? `, Top ${entry.topN}` : ''}`
-                        : `${formatScoreValue(Math.max(0, entry.earned))}/${formatScoreValue(entry.possible)} (${entry.percent.toFixed(1)}%)${entry.topN ? `, Top ${entry.topN}` : ''}`}
+                        ? `${entry.positions} pos, ${formatScoreValue(Math.max(0, entry.earned))}/${formatScoreValue(entry.possible)} (${entry.percent.toFixed(1)}%)${entry.topN ? `, Top ${entry.topN}` : ''}${typeof entry.totalMoveTimeMs === 'number' ? `, Time ${formatDurationMs(entry.totalMoveTimeMs)}` : ''}`
+                        : `${formatScoreValue(Math.max(0, entry.earned))}/${formatScoreValue(entry.possible)} (${entry.percent.toFixed(1)}%)${entry.topN ? `, Top ${entry.topN}` : ''}${typeof entry.totalMoveTimeMs === 'number' ? `, Time ${formatDurationMs(entry.totalMoveTimeMs)}` : ''}`}
                     </span>
                     <span className="history-time">{formatHistoryTimestamp(entry.timestamp)}</span>
                   </div>
@@ -2748,10 +2919,10 @@ export default function App() {
                 <div className="history-list-head">
                   <span className="history-list-title">
                     {puzzleMode
-                      ? `Puzzle History (${formatPuzzleThemeLabel(puzzleTheme)})`
+                      ? `Puzzle History (${formatPuzzleThemeLabel(puzzleTheme)}, ${scoreModeLabel})`
                       : randomFenMode
-                      ? `Random History (${randomFenPhase === 'random' ? 'Random' : randomFenPhase})`
-                      : `Classic History (Level ${engineSkillLevel})`}
+                      ? `Random History (${randomFenPhase === 'random' ? 'Random' : randomFenPhase}, ${scoreModeLabel})`
+                      : `Classic History (Level ${engineSkillLevel}, ${scoreModeLabel})`}
                   </span>
                 </div>
                 <p className="note">No score history yet.</p>
