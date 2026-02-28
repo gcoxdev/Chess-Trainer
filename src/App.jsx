@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Chess } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
+import { TouchBackend } from 'react-dnd-touch-backend';
 import { useStockfish } from './hooks/useStockfish';
 import { COMMON_OPENING_MAX_PLY, findCurrentOpening, findMatchingCommonOpening } from './data/commonOpenings';
 
@@ -139,6 +140,24 @@ function bestMoveSanFromHistory(historyMoves, bestMoveUci) {
   };
   const applied = board.move(parsed);
   return applied?.san || bestMoveUci;
+}
+
+function moveSanFromFen(fen, moveUci) {
+  if (!moveUci || !/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(moveUci)) {
+    return '';
+  }
+
+  try {
+    const board = new Chess(fen);
+    const applied = board.move({
+      from: moveUci.slice(0, 2),
+      to: moveUci.slice(2, 4),
+      promotion: moveUci[4]
+    });
+    return applied?.san || moveUci;
+  } catch {
+    return moveUci;
+  }
 }
 
 function formatMoveMetaDisplay(meta) {
@@ -362,6 +381,7 @@ function getGameResultMessage(board) {
 
 const START_FEN = new Chess().fen();
 const DRAG_START_SLOP_PX = 20;
+const PUZZLE_REPLY_DELAY_MS = 220;
 const VALID_MOVE_DOT = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' shape-rendering='geometricPrecision'%3E%3Ccircle cx='50' cy='50' r='22' fill='%23228B22' fill-opacity='0.97'/%3E%3C/svg%3E")`;
 const PIECE_TYPE_LABEL = { p: 'P', n: 'N', b: 'B', r: 'R', q: 'Q', k: 'K' };
 const PIECE_SYMBOLS = {
@@ -561,6 +581,8 @@ export default function App() {
   const [currentPuzzlePendingScore, setCurrentPuzzlePendingScore] = useState(0);
   const [awaitingNextPuzzle, setAwaitingNextPuzzle] = useState(false);
   const [puzzlesCompleted, setPuzzlesCompleted] = useState(0);
+  const [puzzleHintUnlocked, setPuzzleHintUnlocked] = useState(false);
+  const [showPuzzleHint, setShowPuzzleHint] = useState(false);
   const [currentSessionSaved, setCurrentSessionSaved] = useState(false);
   const [scoreHistory, setScoreHistory] = useState(() => loadScoreHistory());
   const [showScoreHistory, setShowScoreHistory] = useState(false);
@@ -632,10 +654,12 @@ export default function App() {
     () => moveHistory.slice(0, clampedViewedPly),
     [moveHistory, clampedViewedPly]
   );
-  const displayedBoard = useMemo(
-    () => replayBoardFromMoves(displayedMoveHistory, sessionStartFen) || new Chess(game.fen()),
-    [displayedMoveHistory, sessionStartFen, game]
-  );
+  const displayedBoard = useMemo(() => {
+    if (!viewingHistory) {
+      return new Chess(game.fen());
+    }
+    return replayBoardFromMoves(displayedMoveHistory, sessionStartFen) || new Chess(game.fen());
+  }, [viewingHistory, displayedMoveHistory, sessionStartFen, game]);
   const turnLabel = useMemo(() => (displayedBoard.turn() === 'w' ? 'White' : 'Black'), [displayedBoard]);
   const playerTurn = game.turn() === activePlayerColor;
   const engineColor = activePlayerColor === 'w' ? 'b' : 'w';
@@ -991,7 +1015,30 @@ export default function App() {
     return actualTheme ? `Random (${formatPuzzleThemeLabel(actualTheme)})` : 'Random';
   }, [puzzleMode, puzzleTheme, currentPuzzle]);
 
+  const nextPuzzleHint = useMemo(() => {
+    if (!puzzleMode || !puzzleHintUnlocked || awaitingNextPuzzle) {
+      return '';
+    }
+    const nextMoveUci = currentPuzzle?.moves?.[currentPuzzleMoveIndex];
+    if (!nextMoveUci) {
+      return '';
+    }
+    return moveSanFromFen(game.fen(), nextMoveUci);
+  }, [puzzleMode, puzzleHintUnlocked, awaitingNextPuzzle, currentPuzzle, currentPuzzleMoveIndex, game]);
+
   const chessboardTheme = useMemo(() => BOARD_THEMES[boardStyle] || BOARD_THEMES.classic, [boardStyle]);
+  const lightSquareStyle = useMemo(() => ({ backgroundColor: chessboardTheme.light }), [chessboardTheme.light]);
+  const darkSquareStyle = useMemo(() => ({ backgroundColor: chessboardTheme.dark }), [chessboardTheme.dark]);
+  const dropSquareStyle = useMemo(() => ({ boxShadow: 'inset 0 0 0 6px rgba(255, 255, 255, 0.78)' }), []);
+  const dndBackendOptions = useMemo(
+    () => ({
+      enableMouseEvents: true,
+      touchSlop: DRAG_START_SLOP_PX,
+      delayMouseStart: 0,
+      delayTouchStart: 0
+    }),
+    []
+  );
 
   const customPieces = useMemo(() => {
     if (pieceStyle === 'default') {
@@ -1613,6 +1660,8 @@ export default function App() {
     setCurrentPuzzlePendingScore(0);
     setRandomPositionsCompleted(0);
     setPuzzlesCompleted(0);
+    setPuzzleHintUnlocked(false);
+    setShowPuzzleHint(false);
     setCurrentSessionSaved(false);
     setPlayerTurnStartedAt(0);
     setTotalTimedMoveMs(0);
@@ -1751,6 +1800,8 @@ export default function App() {
     setCurrentPuzzlePlayerMoveCount(playerMoveCount);
     setCurrentPuzzlePendingScore(0);
     setAwaitingNextPuzzle(false);
+    setPuzzleHintUnlocked(false);
+    setShowPuzzleHint(false);
     setSessionStartFen(puzzle.fen);
     setGame(new Chess(board.fen()));
     setActivePlayerColor(puzzleSide);
@@ -2059,6 +2110,8 @@ export default function App() {
         setSelectedSquare('');
         setDragSourceSquare('');
         flashInvalidMoveSquares(sourceSquare, targetSquare);
+        setPuzzleHintUnlocked(true);
+        setShowPuzzleHint(false);
         setCurrentPuzzlePendingScore((prev) => prev - 1);
         setScore((prev) => ({ ...prev, errors: prev.errors + 1 }));
         return false;
@@ -2099,39 +2152,60 @@ export default function App() {
         return true;
       }
 
-      const opponentMoveUci = currentPuzzle.moves[nextIndex];
-      const opponentMove = testGame.move({
-        from: opponentMoveUci.slice(0, 2),
-        to: opponentMoveUci.slice(2, 4),
-        promotion: opponentMoveUci[4]
-      });
+      const boardAfterPlayerMoveFen = testGame.fen();
+      setStatus(`Correct puzzle move.${timedMoveSuffix} Opponent replying...`);
+      setIsProcessing(true);
 
-      if (!opponentMove) {
-        setCurrentPuzzleMoveIndex(nextIndex);
-        setStatus('Puzzle sequence error. Load another puzzle.');
-        return true;
-      }
+      const snapshotPuzzle = currentPuzzle;
+      const snapshotNextIndex = nextIndex;
+      const snapshotTotalMoves = totalMoves;
 
-      setGame(new Chess(testGame.fen()));
-      setMoveHistory((prev) => [...prev, opponentMove]);
-      setCurrentPuzzleMoveIndex(nextIndex + 1);
+      setTimeout(() => {
+        const liveBoard = new Chess(boardAfterPlayerMoveFen);
+        const opponentMoveUci = snapshotPuzzle?.moves?.[snapshotNextIndex];
+        if (!opponentMoveUci) {
+          setCurrentPuzzleMoveIndex(snapshotNextIndex);
+          setStatus('Puzzle sequence error. Load another puzzle.');
+          setIsProcessing(false);
+          return;
+        }
 
-      if (nextIndex + 1 >= totalMoves || testGame.isGameOver()) {
-        setScore((prev) => ({
-          ...prev,
-          earned: prev.earned + (currentPuzzlePendingScore + 1),
-          possible: prev.possible + currentPuzzlePlayerMoveCount
-        }));
-        setCurrentPuzzlePendingScore(0);
-        setAwaitingNextPuzzle(true);
-        setPuzzlesCompleted((prev) => prev + 1);
-        setStatus(`Puzzle solved.${timedMoveSuffix} Click Next Puzzle.`);
-        return true;
-      }
+        const opponentMove = liveBoard.move({
+          from: opponentMoveUci.slice(0, 2),
+          to: opponentMoveUci.slice(2, 4),
+          promotion: opponentMoveUci[4]
+        });
 
-      const remaining = totalMoves - (nextIndex + 1);
-      setStatus(`Correct puzzle move.${timedMoveSuffix} Opponent replied ${opponentMove.san}. ${remaining} move${remaining === 1 ? '' : 's'} remaining.`);
-      setPlayerTurnStartedAt(Date.now());
+        if (!opponentMove) {
+          setCurrentPuzzleMoveIndex(snapshotNextIndex);
+          setStatus('Puzzle sequence error. Load another puzzle.');
+          setIsProcessing(false);
+          return;
+        }
+
+        setGame(new Chess(liveBoard.fen()));
+        setMoveHistory((prev) => [...prev, opponentMove]);
+        setCurrentPuzzleMoveIndex(snapshotNextIndex + 1);
+
+        if (snapshotNextIndex + 1 >= snapshotTotalMoves || liveBoard.isGameOver()) {
+          setScore((prev) => ({
+            ...prev,
+            earned: prev.earned + (currentPuzzlePendingScore + 1),
+            possible: prev.possible + currentPuzzlePlayerMoveCount
+          }));
+          setCurrentPuzzlePendingScore(0);
+          setAwaitingNextPuzzle(true);
+          setPuzzlesCompleted((prev) => prev + 1);
+          setStatus(`Puzzle solved.${timedMoveSuffix} Click Next Puzzle.`);
+          setIsProcessing(false);
+          return;
+        }
+
+        const remaining = snapshotTotalMoves - (snapshotNextIndex + 1);
+        setStatus(`Correct puzzle move.${timedMoveSuffix} Opponent replied ${opponentMove.san}. ${remaining} move${remaining === 1 ? '' : 's'} remaining.`);
+        setPlayerTurnStartedAt(Date.now());
+        setIsProcessing(false);
+      }, PUZZLE_REPLY_DELAY_MS);
       return true;
     }
 
@@ -2563,6 +2637,8 @@ export default function App() {
             id="trainer-board"
             position={displayedBoard.fen() || START_FEN}
             dragActivationDistance={DRAG_START_SLOP_PX}
+            customDndBackend={TouchBackend}
+            customDndBackendOptions={dndBackendOptions}
             onPieceDragBegin={onPieceDragBegin}
             onPieceDragEnd={onPieceDragEnd}
             onPieceDrop={onDrop}
@@ -2572,13 +2648,14 @@ export default function App() {
             onArrowsChange={handleArrowsChange}
             customArrows={displayArrows}
             customSquareStyles={selectedSquareStyles}
-            customLightSquareStyle={{ backgroundColor: chessboardTheme.light }}
-            customDarkSquareStyle={{ backgroundColor: chessboardTheme.dark }}
+            customLightSquareStyle={lightSquareStyle}
+            customDarkSquareStyle={darkSquareStyle}
             customBoardStyle={chessboardTheme.board}
-            customDropSquareStyle={{ boxShadow: 'inset 0 0 0 6px rgba(255, 255, 255, 0.78)' }}
+            customDropSquareStyle={dropSquareStyle}
             customPieces={customPieces}
             boardWidth={boardWidth}
             boardOrientation={boardOrientation}
+            animationDuration={250}
             arePiecesDraggable={isGameStarted && !viewingHistory && !isProcessing && !effectiveGameOver && (freeplayMode || puzzleMode || playerTurn)}
           />
         </div>
@@ -2959,6 +3036,21 @@ export default function App() {
               </button>
               {showLastEvaluated ? (
                 <p><strong>Last top choices:</strong> {lastEvaluatedMoves.join(', ')}</p>
+              ) : null}
+            </>
+          ) : null}
+
+          {puzzleMode && puzzleHintUnlocked && nextPuzzleHint ? (
+            <>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => setShowPuzzleHint((prev) => !prev)}
+              >
+                {showPuzzleHint ? 'Hide Puzzle Hint' : 'Reveal Puzzle Hint'}
+              </button>
+              {showPuzzleHint ? (
+                <p><strong>Next puzzle move hint:</strong> {nextPuzzleHint}</p>
               ) : null}
             </>
           ) : null}
