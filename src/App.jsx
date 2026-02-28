@@ -62,6 +62,12 @@ function randomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
+function yieldToMainThread() {
+  return new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
 function countPiecesFromFen(board) {
   return (board.fen().split(' ')[0].match(/[prnbqkPRNBQK]/g) || []).length;
 }
@@ -203,11 +209,15 @@ function pickBiasedRandomMove(board, legalMoves, phaseConfig) {
   return legalMoves[randomInt(0, legalMoves.length - 1)];
 }
 
-function generateRandomTrainingBoard({ playerColor, minLegalMoves, phase }) {
+async function generateRandomTrainingBoard({ playerColor, minLegalMoves, phase }) {
   const maxAttempts = phase === 'endgame' ? 220 : 140;
   const phaseConfig = getPhaseConfig(phase);
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (attempt > 0 && attempt % 12 === 0) {
+      await yieldToMainThread();
+    }
+
     const board = new Chess();
     let failed = false;
     let reachedCandidate = false;
@@ -522,7 +532,7 @@ export default function App() {
   const puzzlePoolCacheRef = useRef(new Map());
   const invalidFlashTimeoutsRef = useRef([]);
 
-  const { ready, error, configure, evaluateTopMoves } = useStockfish();
+  const { ready, error, configure, beginNewGame, evaluateTopMoves, chooseMoveFast } = useStockfish();
 
   const togglePanel = (panelKey) => {
     setCollapsedPanels((prev) => ({ ...prev, [panelKey]: !prev[panelKey] }));
@@ -1545,7 +1555,7 @@ export default function App() {
   };
 
   const loadRandomFenPosition = async (playerSide, statusMessage) => {
-    const board = generateRandomTrainingBoard({
+    const board = await generateRandomTrainingBoard({
       playerColor: playerSide,
       minLegalMoves: Math.max(1, topN),
       phase: randomFenPhase
@@ -1596,7 +1606,7 @@ export default function App() {
   };
 
   const applyEngineReply = async (boardAfterHumanMove, lastRankLabel, scoreSnapshot = score, historyAfterHumanMove = null) => {
-    const { bestMove } = await evaluateTopMoves({ fen: boardAfterHumanMove.fen(), topN: 1 });
+    const bestMove = await chooseMoveFast({ fen: boardAfterHumanMove.fen() });
     const liveBoard = new Chess(boardAfterHumanMove.fen());
     let engineMove = null;
 
@@ -1650,6 +1660,8 @@ export default function App() {
       return;
     }
 
+    beginNewGame();
+
     const chosenColor =
       playerColor === 'random' ? (Math.random() < 0.5 ? 'w' : 'b') : playerColor;
     const board = new Chess();
@@ -1701,7 +1713,7 @@ export default function App() {
       }
 
       if (chosenColor === 'b') {
-        const { bestMove } = await evaluateTopMoves({ fen: board.fen(), topN: 1 });
+        const bestMove = await chooseMoveFast({ fen: board.fen() });
         if (bestMove && bestMove !== '(none)') {
           const openingEngineMove = board.move({
             from: bestMove.slice(0, 2),

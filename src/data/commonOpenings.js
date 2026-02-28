@@ -10,6 +10,7 @@ const LICHESS_OPENINGS_TSV = [openingsA, openingsB, openingsC, openingsD, openin
 // The exact max ply is derived from the dataset on first use.
 const COMMON_OPENING_MAX_PLY = 120;
 let openingIndexCache = null;
+let openingIndexWarmScheduled = false;
 
 function toUci(move) {
   return `${move.from}${move.to}${move.promotion ?? ''}`;
@@ -114,6 +115,30 @@ function ensureOpeningIndex() {
   return openingIndexCache;
 }
 
+function scheduleOpeningIndexWarmup() {
+  if (openingIndexCache || openingIndexWarmScheduled) {
+    return;
+  }
+
+  openingIndexWarmScheduled = true;
+  const build = () => {
+    try {
+      if (!openingIndexCache) {
+        openingIndexCache = buildOpeningPrefixIndex();
+      }
+    } finally {
+      openingIndexWarmScheduled = false;
+    }
+  };
+
+  if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(build, { timeout: 1200 });
+    return;
+  }
+
+  setTimeout(build, 0);
+}
+
 function chooseOpeningLabel(matches, currentPly) {
   if (!matches?.length) {
     return null;
@@ -150,7 +175,29 @@ export function findMatchingCommonOpening(lineUciMoves) {
 }
 
 export function findCurrentOpening(lineUciMoves) {
-  return findMatchingCommonOpening(lineUciMoves);
+  if (!Array.isArray(lineUciMoves) || !lineUciMoves.length || lineUciMoves.length > COMMON_OPENING_MAX_PLY) {
+    return null;
+  }
+
+  if (!openingIndexCache) {
+    scheduleOpeningIndexWarmup();
+    return null;
+  }
+
+  const { prefixMap, maxPly } = openingIndexCache;
+  if (lineUciMoves.length > maxPly) {
+    return null;
+  }
+
+  const matches = prefixMap.get(lineUciMoves.join(' '));
+  if (!matches?.length) {
+    return null;
+  }
+
+  return {
+    matches,
+    label: chooseOpeningLabel(matches, lineUciMoves.length)
+  };
 }
 
 export { COMMON_OPENING_MAX_PLY };

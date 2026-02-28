@@ -92,7 +92,13 @@ export function useStockfish() {
     send('isready');
   };
 
-  const evaluateTopMoves = ({ fen, topN }) => {
+  const beginNewGame = () => {
+    send('stop');
+    send('ucinewgame');
+    send('isready');
+  };
+
+  const evaluateTopMoves = ({ fen, topN, depth }) => {
     if (!ready) {
       return Promise.reject(new Error('Engine not ready'));
     }
@@ -128,12 +134,53 @@ export function useStockfish() {
       linesRef.current = [];
 
       send('stop');
-      send('ucinewgame');
       send(`position fen ${fen}`);
       send(`setoption name MultiPV value ${topN}`);
-      send(`go depth ${Math.min(18, 8 + topN)}`);
+      send(`go depth ${Math.max(4, Math.min(24, depth ?? Math.min(18, 8 + topN)))}`);
     });
   };
 
-  return { ready, error, configure, evaluateTopMoves };
+  const chooseMoveFast = ({ fen, moveTimeMs = 220 }) => {
+    if (!ready) {
+      return Promise.reject(new Error('Engine not ready'));
+    }
+
+    if (pendingRef.current) {
+      return Promise.reject(new Error('Engine busy'));
+    }
+
+    return new Promise((resolve, reject) => {
+      const requestId = ++requestSeqRef.current;
+      const timeoutId = window.setTimeout(() => {
+        if (!pendingRef.current || pendingRef.current.id !== requestId) {
+          return;
+        }
+        pendingRef.current.reject(new Error('Engine move selection timed out'));
+        pendingRef.current = null;
+        linesRef.current = [];
+        send('stop');
+      }, 15000);
+
+      pendingRef.current = {
+        id: requestId,
+        topN: 1,
+        resolve: (payload) => {
+          window.clearTimeout(timeoutId);
+          resolve(payload.bestMove);
+        },
+        reject: (err) => {
+          window.clearTimeout(timeoutId);
+          reject(err);
+        }
+      };
+      linesRef.current = [];
+
+      send('stop');
+      send(`position fen ${fen}`);
+      send('setoption name MultiPV value 1');
+      send(`go movetime ${Math.max(30, Math.floor(moveTimeMs))}`);
+    });
+  };
+
+  return { ready, error, configure, beginNewGame, evaluateTopMoves, chooseMoveFast };
 }
