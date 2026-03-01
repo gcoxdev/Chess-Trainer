@@ -11,8 +11,11 @@ export function ScorePanel({
   useTimeScoring,
   displayedTotalTimedMs,
   randomFenMode,
+  repertoireMode,
   puzzleMode,
   currentOpening,
+  repertoireLabel,
+  repertoireLinesCompleted,
   randomPositionsCompleted,
   puzzlesCompleted,
   puzzleThemeDisplay,
@@ -52,15 +55,17 @@ export function ScorePanel({
         {!freeplayMode ? <p><strong>Current:</strong> {formatScoreValue(score.earned)} / {formatScoreValue(score.possible)} ({scorePercent}%)</p> : null}
         {!freeplayMode ? <p><strong>Mistakes:</strong> {score.errors}</p> : null}
         {!freeplayMode && useTimeScoring ? <p><strong>Total Time:</strong> {formatDurationMs(displayedTotalTimedMs)}</p> : null}
-        {!randomFenMode && !puzzleMode ? (
+        {!randomFenMode && !puzzleMode && !repertoireMode ? (
           <p><strong>Opening:</strong> {currentOpening?.label || '-'}</p>
         ) : null}
+        {repertoireMode ? <p><strong>Line:</strong> {repertoireLabel}</p> : null}
+        {repertoireMode ? <p><strong>Completed:</strong> {repertoireLinesCompleted}</p> : null}
         {randomFenMode ? <p><strong>Positions:</strong> {randomPositionsCompleted}</p> : null}
         {puzzleMode ? <p><strong>Puzzles:</strong> {puzzlesCompleted}</p> : null}
         {puzzleMode ? <p><strong>Theme:</strong> {puzzleThemeDisplay}</p> : null}
         {freeplayMode ? <p><strong>Move Analysis:</strong> {freeplayAnalyzeMoves ? `Top ${topN} enabled` : 'Off'}</p> : null}
-        {!freeplayMode ? <p><strong>Score Mode:</strong> {scoreModeLabel}</p> : null}
-        {!randomFenMode && !freeplayMode && !puzzleMode ? (
+        {!freeplayMode && !repertoireMode ? <p><strong>Score Mode:</strong> {scoreModeLabel}</p> : null}
+        {!randomFenMode && !freeplayMode && !puzzleMode && !repertoireMode ? (
           bestClassicScore ? (
             <p>
               <strong>Best Classic:</strong>{' '}
@@ -98,7 +103,7 @@ export function ScorePanel({
             <p><strong>Best Puzzle:</strong> -</p>
           )
         ) : null}
-        {!freeplayMode ? (
+        {!freeplayMode && !repertoireMode ? (
           <button
             type="button"
             className="secondary"
@@ -107,7 +112,7 @@ export function ScorePanel({
             {showScoreHistory ? 'Hide Score History' : 'Show Score History'}
           </button>
         ) : null}
-        {!freeplayMode && showScoreHistory ? (
+        {!freeplayMode && !repertoireMode && showScoreHistory ? (
           activeScoreHistory.length ? (
             <div className="history-list">
               <div className="history-list-head">

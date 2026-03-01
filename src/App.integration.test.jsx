@@ -7,6 +7,12 @@ const evaluateTopMovesMock = vi.fn(async ({ topN }) => ({
   topMoves: ['d2d4', 'g1f3', 'c2c4'].slice(0, topN)
 }));
 const generateRandomTrainingBoardMock = vi.fn(async () => new Chess());
+let repertoireLineData = {
+  name: 'Test Opening',
+  eco: 'T00',
+  label: 'Test Opening (T00)',
+  moves: ['e2e4', 'e7e5', 'g1f3']
+};
 let puzzlePoolData = [
   {
     fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1',
@@ -23,9 +29,20 @@ vi.mock('./lib/chessCore', async () => {
   };
 });
 
+vi.mock('./data/commonOpenings', async () => {
+  const actual = await vi.importActual('./data/commonOpenings');
+  return {
+    ...actual,
+    getOpeningRepertoireOptions: () => ([
+      { value: 'test-opening', label: 'Test Opening (T00)' }
+    ]),
+    getOpeningRepertoireLine: () => ({ ...repertoireLineData, moves: [...repertoireLineData.moves] })
+  };
+});
+
 vi.mock('react-chessboard', () => {
   function ChessboardMock({ options }) {
-    const drops = ['e2e4', 'e2e3', 'e7e5', 'a7a8'];
+    const drops = ['e2e4', 'e2e3', 'e7e5', 'g1f3', 'a7a8'];
     const clicks = ['a7', 'a8'];
     return (
       <div data-testid="mock-board">
@@ -50,6 +67,7 @@ vi.mock('react-chessboard', () => {
         <button type="button" onClick={() => options.onPieceDrop?.('e2', 'e4')}>drop-str-e2e4</button>
         <div data-testid="arrows">{JSON.stringify(options.arrows || [])}</div>
         <div data-testid="can-drag">{String(options.canDragPiece?.())}</div>
+        <div data-testid="board-orientation">{String(options.boardOrientation || '')}</div>
       </div>
     );
   }
@@ -86,6 +104,12 @@ describe('App integration flows', () => {
         themes: ['opening']
       }
     ];
+    repertoireLineData = {
+      name: 'Test Opening',
+      eco: 'T00',
+      label: 'Test Opening (T00)',
+      moves: ['e2e4', 'e7e5', 'g1f3']
+    };
     window.localStorage.clear();
     global.fetch = vi.fn(async (url) => {
       if (String(url).includes('/puzzles/manifest.json')) {
@@ -192,6 +216,72 @@ describe('App integration flows', () => {
     });
   });
 
+  test('repertoire mode rejects wrong moves and enables Next Line after completion', async () => {
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText(/Game Mode/i), {
+      target: { value: 'repertoire' }
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Start Game/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Openings mode started/i)).toBeInTheDocument();
+    });
+
+    const nextLineButton = screen.getByRole('button', { name: /Next Line/i });
+    expect(nextLineButton).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'drop-e2e3' }));
+    await waitFor(() => {
+      expect(screen.getByText(/Incorrect line move\./i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'drop-e2e4' }));
+    await waitFor(() => {
+      expect(screen.getByText(/Correct line move\./i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'drop-g1f3' }));
+    await waitFor(() => {
+      expect(screen.getByText(/Line complete: Test Opening \(T00\)\./i)).toBeInTheDocument();
+      expect(nextLineButton).toBeEnabled();
+      expect(screen.getByText('Current:', { selector: 'strong' }).parentElement).toHaveTextContent('2 / 2');
+    });
+  });
+
+  test('repertoire side selector auto-detects black-opening families and allows white override', async () => {
+    repertoireLineData = {
+      name: 'Caro-Kann',
+      eco: 'B10',
+      label: 'Caro-Kann (B10)',
+      moves: ['e2e4', 'c7c6', 'd2d4']
+    };
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText(/Game Mode/i), {
+      target: { value: 'repertoire' }
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Start Game/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/Turn:/i).parentElement).toHaveTextContent('Black to move');
+      expect(screen.getByTestId('board-orientation')).toHaveTextContent('black');
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /End Game/i }));
+    fireEvent.change(screen.getByLabelText(/Opening Side/i), {
+      target: { value: 'white' }
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Start Game/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Turn:/i).parentElement).toHaveTextContent('White to move');
+      expect(screen.getByTestId('board-orientation')).toHaveTextContent('white');
+    });
+  });
+
   test('puzzle mode unlocks and reveals hint after an incorrect move', async () => {
     render(<App />);
 
@@ -282,7 +372,7 @@ describe('App integration flows', () => {
     expect(readTotalTime()).toBe(frozen);
   }, 12000);
 
-  test('history review shows missed best-move arrow before and after move', async () => {
+  test('history review shows missed best-move arrow for top-N non-best moves before and after move', async () => {
     render(<App />);
 
     fireEvent.change(screen.getByLabelText(/Game Mode/i), {
@@ -294,9 +384,9 @@ describe('App integration flows', () => {
       expect(screen.getByText(/Freeplay started/i)).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'drop-e2e4' }));
+    fireEvent.click(screen.getByRole('button', { name: 'drop-g1f3' }));
     await waitFor(() => {
-      expect(screen.getByText('>3 · d4')).toBeInTheDocument();
+      expect(screen.getByText(/2nd Best Move Played\./i)).toBeInTheDocument();
     });
     fireEvent.click(screen.getByRole('button', { name: 'drop-e7e5' }));
 

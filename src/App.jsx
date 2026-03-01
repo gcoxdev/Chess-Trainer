@@ -11,7 +11,14 @@ import { useHistoryControls } from './hooks/useHistoryControls';
 import { useStockfish } from './hooks/useStockfish';
 import { useResponsiveBoardSize } from './hooks/useResponsiveBoardSize';
 import { useScoreHistory } from './hooks/useScoreHistory';
-import { COMMON_OPENING_MAX_PLY, findCurrentOpening, findMatchingCommonOpening } from './data/commonOpenings';
+import {
+  COMMON_OPENING_MAX_PLY,
+  findCurrentOpening,
+  findMatchingCommonOpening,
+  getOpeningRepertoireLine,
+  getOpeningRepertoireOptions,
+  recommendedTrainingSideForOpening
+} from './data/commonOpenings';
 import { handleFreeplayMove, handlePuzzleMove, handleRankedMove } from './lib/moveModeHandlers';
 import {
   PIECE_TYPE_LABEL,
@@ -65,6 +72,12 @@ export default function App() {
   const [topN, setTopN] = useState(3);
   const [gameMode, setGameMode] = useState('classic');
   const [randomFenPhase, setRandomFenPhase] = useState('random');
+  const [repertoireOpening, setRepertoireOpening] = useState('random');
+  const [repertoireSide, setRepertoireSide] = useState('auto');
+  const [repertoireLine, setRepertoireLine] = useState(null);
+  const [repertoireCursor, setRepertoireCursor] = useState(0);
+  const [repertoireLinesCompleted, setRepertoireLinesCompleted] = useState(0);
+  const [awaitingNextRepertoire, setAwaitingNextRepertoire] = useState(false);
   const [puzzleTheme, setPuzzleTheme] = useState('random');
   const [freeplayAnalyzeMoves, setFreeplayAnalyzeMoves] = useState(true);
   const [useTimeScoring, setUseTimeScoring] = useState(false);
@@ -179,6 +192,7 @@ export default function App() {
   const playerTurn = game.turn() === activePlayerColor;
   const engineColor = activePlayerColor === 'w' ? 'b' : 'w';
   const randomFenMode = gameMode === 'random-fen';
+  const repertoireMode = gameMode === 'repertoire';
   const puzzleMode = gameMode === 'puzzle';
   const freeplayMode = gameMode === 'freeplay';
   const {
@@ -209,11 +223,13 @@ export default function App() {
       useTimeScoring
       && isGameStarted
       && !freeplayMode
+      && !repertoireMode
       && !effectiveGameOver
       && !viewingHistory
       && !isProcessing
       && !awaitingNextRandomFen
       && !awaitingNextPuzzle
+      && !awaitingNextRepertoire
       && playerTurn
       && playerTurnStartedAt > 0
     ),
@@ -221,11 +237,13 @@ export default function App() {
       useTimeScoring,
       isGameStarted,
       freeplayMode,
+      repertoireMode,
       effectiveGameOver,
       viewingHistory,
       isProcessing,
       awaitingNextRandomFen,
       awaitingNextPuzzle,
+      awaitingNextRepertoire,
       playerTurn,
       playerTurnStartedAt
     ]
@@ -247,11 +265,11 @@ export default function App() {
     && isProcessing
     && (randomFenMode || puzzleMode || freeplayMode || game.turn() === engineColor);
   const boardOrientation = useMemo(() => {
-    if (autoFlipBoard && isGameStarted) {
+    if (autoFlipBoard && freeplayMode && isGameStarted) {
       return displayedBoard.turn() === 'w' ? 'white' : 'black';
     }
     return manualBoardOrientation;
-  }, [autoFlipBoard, isGameStarted, displayedBoard, manualBoardOrientation]);
+  }, [autoFlipBoard, freeplayMode, isGameStarted, displayedBoard, manualBoardOrientation]);
 
   const turnDisplay = useMemo(() => {
     if (!isGameStarted) {
@@ -263,7 +281,7 @@ export default function App() {
     if (viewingHistory) {
       return `Reviewing move ${clampedViewedPly}/${moveHistory.length} (${turnLabel} to move)`;
     }
-    if (freeplayMode || puzzleMode) {
+    if (freeplayMode || puzzleMode || repertoireMode) {
       return `${turnLabel} to move`;
     }
     if (playerTurn) {
@@ -273,15 +291,15 @@ export default function App() {
       return `${turnLabel} to move`;
     }
     return `${turnLabel} to move (Engine)`;
-  }, [isGameStarted, effectiveGameOver, viewingHistory, clampedViewedPly, moveHistory.length, playerTurn, turnLabel, randomFenMode, freeplayMode, puzzleMode]);
+  }, [isGameStarted, effectiveGameOver, viewingHistory, clampedViewedPly, moveHistory.length, playerTurn, turnLabel, randomFenMode, freeplayMode, puzzleMode, repertoireMode]);
   const scorePercent = useMemo(() => {
     if (!score.possible) {
       return 0;
     }
     return ((Math.max(0, score.earned) / score.possible) * 100).toFixed(1);
   }, [score]);
-  const showWhiteRankColumn = freeplayMode || resolvedPlayerColor === 'w';
-  const showBlackRankColumn = freeplayMode || resolvedPlayerColor === 'b';
+  const showWhiteRankColumn = !repertoireMode && (freeplayMode || resolvedPlayerColor === 'w');
+  const showBlackRankColumn = !repertoireMode && (freeplayMode || resolvedPlayerColor === 'b');
   const moveRowTemplate = showWhiteRankColumn && showBlackRankColumn
     ? '36px minmax(0, 1fr) minmax(90px, 0.8fr) minmax(0, 1fr) minmax(90px, 0.8fr)'
     : showWhiteRankColumn
@@ -331,7 +349,7 @@ export default function App() {
   }, [playerMoveMeta]);
 
   const replayBestMoveArrow = useMemo(() => {
-    if (!viewingHistory) {
+    if (!viewingHistory || repertoireMode) {
       return null;
     }
 
@@ -344,6 +362,9 @@ export default function App() {
       }
 
       const meta = playerMetaByPly.get(ply);
+      if (typeof meta?.rank !== 'number' || meta.rank < 1) {
+        continue;
+      }
       const bestMoveUci = String(meta?.bestMoveUci || '');
       if (!bestMoveUci || !/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(bestMoveUci)) {
         continue;
@@ -358,7 +379,7 @@ export default function App() {
     }
 
     return null;
-  }, [viewingHistory, clampedViewedPly, playerMetaByPly, moveHistory]);
+  }, [viewingHistory, repertoireMode, clampedViewedPly, playerMetaByPly, moveHistory]);
 
   const displayArrows = useMemo(() => {
     const arrows = Array.isArray(drawnArrows) ? drawnArrows : [];
@@ -467,6 +488,8 @@ export default function App() {
     const actualTheme = currentPuzzle?.themes?.[0];
     return actualTheme ? `Random (${formatPuzzleThemeLabel(actualTheme)})` : 'Random';
   }, [puzzleMode, puzzleTheme, currentPuzzle]);
+  const repertoireOpeningOptions = useMemo(() => getOpeningRepertoireOptions(), []);
+  const repertoireLabel = repertoireLine?.label || '-';
   const activeScoreHistoryTitle = useMemo(() => {
     if (puzzleMode) {
       return `Puzzle History (${formatPuzzleThemeLabel(puzzleTheme)}, ${scoreModeLabel})`;
@@ -619,6 +642,10 @@ export default function App() {
   const resetToSetup = useCallback(() => {
     nextAsyncEpoch();
     baseResetToSetup();
+    setRepertoireLine(null);
+    setRepertoireCursor(0);
+    setRepertoireLinesCompleted(0);
+    setAwaitingNextRepertoire(false);
   }, [nextAsyncEpoch, baseResetToSetup]);
 
   const preloadTopMoves = async (fen, nextTopN, epoch = asyncEpochRef.current) => {
@@ -763,6 +790,63 @@ export default function App() {
     setPlayerTurnStartedAt(Date.now());
   };
 
+  const loadRepertoirePosition = async (sideSetting, statusMessage, epoch = asyncEpochRef.current) => {
+    const line = getOpeningRepertoireLine(repertoireOpening);
+    if (!line?.moves?.length) {
+      throw new Error('No opening lines found for that opening.');
+    }
+    const playerSide = sideSetting === 'white'
+      ? 'w'
+      : sideSetting === 'black'
+        ? 'b'
+        : recommendedTrainingSideForOpening(line);
+
+    const board = new Chess();
+    const seedHistory = [];
+    let cursor = 0;
+    while (cursor < line.moves.length && board.turn() !== playerSide) {
+      const uci = line.moves[cursor];
+      const applied = board.move({
+        from: uci.slice(0, 2),
+        to: uci.slice(2, 4),
+        promotion: uci[4]
+      });
+      if (!applied) {
+        break;
+      }
+      seedHistory.push(applied);
+      cursor += 1;
+    }
+
+    if (!isAsyncEpochCurrent(epoch)) {
+      return;
+    }
+
+    const playerExpectedMoves = line.moves.filter((_, idx) => (
+      playerSide === 'w' ? idx % 2 === 0 : idx % 2 === 1
+    )).length;
+
+    setSessionStartFen(START_FEN);
+    setGame(new Chess(board.fen()));
+    setMoveHistory(seedHistory);
+    setPlayerMoveMeta([]);
+    setCurrentTopMoves([]);
+    setSelectedSquare('');
+    setDragSourceSquare('');
+    setErrorSquareStyles({});
+    setRightClickedSquares({});
+    setDrawnArrows([]);
+    setRepertoireLine(line);
+    setRepertoireCursor(cursor);
+    setAwaitingNextRepertoire(cursor >= line.moves.length);
+    setActivePlayerColor(playerSide);
+    setManualBoardOrientation(playerSide === 'w' ? 'white' : 'black');
+    setScore({ earned: 0, possible: playerExpectedMoves, errors: 0 });
+    const sideLabel = playerSide === 'w' ? 'White' : 'Black';
+    setStatus(statusMessage || `Opening loaded: ${line.label} (${sideLabel} side).`);
+    setPlayerTurnStartedAt(Date.now());
+  };
+
   const nextRandomFenPosition = async () => {
     if (!isGameStarted || !randomFenMode || isProcessing || !awaitingNextRandomFen) {
       return;
@@ -795,6 +879,26 @@ export default function App() {
     } catch (e) {
       if (isAsyncEpochCurrent(epoch)) {
         setStatus(e.message || 'Error loading next puzzle.');
+      }
+    } finally {
+      if (isAsyncEpochCurrent(epoch)) {
+        setIsProcessing(false);
+      }
+    }
+  };
+
+  const nextRepertoirePosition = async () => {
+    if (!isGameStarted || !repertoireMode || isProcessing || !awaitingNextRepertoire) {
+      return;
+    }
+
+    const epoch = nextAsyncEpoch();
+    setIsProcessing(true);
+    try {
+      await loadRepertoirePosition(repertoireSide, 'New opening line loaded.', epoch);
+    } catch (e) {
+      if (isAsyncEpochCurrent(epoch)) {
+        setStatus(e.message || 'Error loading opening line.');
       }
     } finally {
       if (isAsyncEpochCurrent(epoch)) {
@@ -896,6 +1000,10 @@ export default function App() {
     setDrawnArrows([]);
     setIsProcessing(true);
     setRandomPositionsCompleted(0);
+    setRepertoireLine(null);
+    setRepertoireCursor(0);
+    setRepertoireLinesCompleted(0);
+    setAwaitingNextRepertoire(false);
     setCurrentSessionSaved(false);
     setPlayerTurnStartedAt(0);
     setTotalTimedMoveMs(0);
@@ -917,6 +1025,14 @@ export default function App() {
       if (puzzleMode) {
         await ensurePuzzleManifest(epoch);
         await loadPuzzlePosition('Puzzle mode started.', epoch);
+        if (isAsyncEpochCurrent(epoch)) {
+          setIsProcessing(false);
+        }
+        return;
+      }
+
+      if (repertoireMode) {
+        await loadRepertoirePosition(repertoireSide, 'Openings mode started.', epoch);
         if (isAsyncEpochCurrent(epoch)) {
           setIsProcessing(false);
         }
@@ -1009,6 +1125,10 @@ export default function App() {
       setStatus('Click Next Puzzle to continue.');
       return false;
     }
+    if (repertoireMode && awaitingNextRepertoire) {
+      setStatus('Click Next Line to continue.');
+      return false;
+    }
 
     if (effectiveGameOver) {
       setStatus('Game is over. Start a new game.');
@@ -1020,12 +1140,12 @@ export default function App() {
       return false;
     }
 
-    if ((!freeplayMode || freeplayAnalyzeMoves) && !puzzleMode && !currentTopMoves.length) {
+    if ((!freeplayMode || freeplayAnalyzeMoves) && !puzzleMode && !repertoireMode && !currentTopMoves.length) {
       setStatus('Analyzing position...');
       return false;
     }
 
-    const needsHistoryAwareBoard = !randomFenMode && !puzzleMode;
+    const needsHistoryAwareBoard = !randomFenMode && !puzzleMode && !repertoireMode;
     const testGame = needsHistoryAwareBoard
       ? (replayBoardFromMoves(moveHistory) || new Chess(game.fen()))
       : new Chess(game.fen());
@@ -1059,7 +1179,7 @@ export default function App() {
     const elapsedMs = playerTurnStartedAt ? Math.max(0, Date.now() - playerTurnStartedAt) : 0;
     const timeFactor = useTimeScoring ? getTimeScoreFactor(elapsedMs) : 1;
     const timedMoveSuffix = useTimeScoring ? ` Time: ${formatElapsedSeconds(elapsedMs)}.` : '';
-    if (useTimeScoring && !freeplayMode) {
+    if (useTimeScoring && !freeplayMode && !repertoireMode) {
       setTotalTimedMoveMs((prev) => prev + elapsedMs);
     }
 
@@ -1131,6 +1251,83 @@ export default function App() {
         pointsForRank,
         rankLabel
       });
+    }
+
+    if (repertoireMode) {
+      const expectedMoveUci = repertoireLine?.moves?.[repertoireCursor] || '';
+      if (!expectedMoveUci) {
+        setAwaitingNextRepertoire(true);
+        setStatus('Line complete. Click Next Line.');
+        return false;
+      }
+
+      if (moveUci !== expectedMoveUci) {
+        const expectedSan = moveSanFromFen(game.fen(), expectedMoveUci);
+        setStatus(`Incorrect line move. Expected ${expectedSan || expectedMoveUci}.${timedMoveSuffix}`);
+        setSelectedSquare('');
+        setDragSourceSquare('');
+        flashInvalidMoveSquares(sourceSquare, targetSquare);
+        setScore((prev) => ({ ...prev, errors: prev.errors + 1 }));
+        return false;
+      }
+
+      const nextBoard = new Chess(testGame.fen());
+      const nextMoves = [humanMove];
+      let nextCursor = repertoireCursor + 1;
+
+      while (nextCursor < repertoireLine.moves.length && nextBoard.turn() !== activePlayerColor) {
+        const replyUci = repertoireLine.moves[nextCursor];
+        const replyMove = nextBoard.move({
+          from: replyUci.slice(0, 2),
+          to: replyUci.slice(2, 4),
+          promotion: replyUci[4]
+        });
+
+        if (!replyMove) {
+          setStatus(`Repertoire line error at move ${nextCursor + 1}. Load next line.`);
+          setAwaitingNextRepertoire(true);
+          return false;
+        }
+
+        nextMoves.push(replyMove);
+        nextCursor += 1;
+      }
+
+      setScore((prev) => ({ ...prev, earned: prev.earned + 1 }));
+      setPlayerMoveMeta((prev) => [
+        ...prev,
+        {
+          ply,
+          san: humanMove.san,
+          rank: 1,
+          label: 'Line Move',
+          points: 1,
+          bestMove: moveSanFromFen(game.fen(), expectedMoveUci),
+          bestMoveUci: expectedMoveUci,
+          elapsedMs
+        }
+      ]);
+      setGame(nextBoard);
+      setMoveHistory((prev) => [...prev, ...nextMoves]);
+      setSelectedSquare('');
+      setDragSourceSquare('');
+      setRightClickedSquares({});
+      setDrawnArrows([]);
+      setRepertoireCursor(nextCursor);
+
+      if (nextCursor >= repertoireLine.moves.length || nextBoard.isGameOver()) {
+        setAwaitingNextRepertoire(true);
+        setRepertoireLinesCompleted((prev) => prev + 1);
+        setCurrentTopMoves([]);
+        setStatus(`Line complete: ${repertoireLine.label}.${timedMoveSuffix} Click Next Line.`);
+        setPlayerTurnStartedAt(0);
+        return true;
+      }
+
+      const opponentReply = nextMoves.length > 1 ? ` Opponent replied ${nextMoves[nextMoves.length - 1].san}.` : '';
+      setStatus(`Correct line move.${timedMoveSuffix}${opponentReply}`);
+      setPlayerTurnStartedAt(Date.now());
+      return true;
     }
 
     return handleRankedMove({
@@ -1245,7 +1442,7 @@ export default function App() {
   };
 
   const resignGame = () => {
-    if (!isGameStarted || isProcessing || effectiveGameOver || randomFenMode || puzzleMode) {
+    if (!isGameStarted || isProcessing || effectiveGameOver || randomFenMode || puzzleMode || repertoireMode) {
       return;
     }
 
@@ -1334,6 +1531,10 @@ export default function App() {
     }
     if (puzzleMode && awaitingNextPuzzle) {
       setStatus('Click Next Puzzle to continue.');
+      return;
+    }
+    if (repertoireMode && awaitingNextRepertoire) {
+      setStatus('Click Next Line to continue.');
       return;
     }
 
@@ -1454,8 +1655,14 @@ export default function App() {
     settingsLocked,
     setGameMode,
     randomFenMode,
+    repertoireMode,
     randomFenPhase,
     setRandomFenPhase,
+    repertoireOpening,
+    setRepertoireOpening,
+    repertoireOpeningOptions,
+    repertoireSide,
+    setRepertoireSide,
     puzzleMode,
     puzzleTheme,
     setPuzzleTheme,
@@ -1503,8 +1710,11 @@ export default function App() {
     useTimeScoring,
     displayedTotalTimedMs,
     randomFenMode,
+    repertoireMode,
     puzzleMode,
     currentOpening,
+    repertoireLabel,
+    repertoireLinesCompleted,
     randomPositionsCompleted,
     puzzlesCompleted,
     puzzleThemeDisplay,
@@ -1580,7 +1790,7 @@ export default function App() {
                 />
               </label>
             ) : null}
-            {isGameStarted && !randomFenMode && !puzzleMode ? (
+            {isGameStarted && !randomFenMode && !puzzleMode && !repertoireMode ? (
               <button
                 type="button"
                 className="secondary board-flip-button"
@@ -1651,6 +1861,17 @@ export default function App() {
             disabled={!isGameStarted || isProcessing || !awaitingNextPuzzle}
           >
             Next Puzzle
+          </button>
+        </div>
+      ) : repertoireMode ? (
+        <div className="random-next-bar" aria-label="Openings controls">
+          <button
+            type="button"
+            className="random-next-button"
+            onClick={nextRepertoirePosition}
+            disabled={!isGameStarted || isProcessing || !awaitingNextRepertoire}
+          >
+            Next Line
           </button>
         </div>
       ) : (

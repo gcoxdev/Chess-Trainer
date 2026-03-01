@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "test": "vitest run",
+    "check-opening-sides": "node scripts/check-opening-side-map.mjs",
     "preview": "vite preview",
     "setup-engine": "node scripts/copy-stockfish.mjs",
     "postinstall": "node scripts/copy-stockfish.mjs"

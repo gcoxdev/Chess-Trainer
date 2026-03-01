@@ -4,6 +4,7 @@ import openingsB from './lichess-openings/b.tsv?raw';
 import openingsC from './lichess-openings/c.tsv?raw';
 import openingsD from './lichess-openings/d.tsv?raw';
 import openingsE from './lichess-openings/e.tsv?raw';
+import { OPENING_FAMILY_SIDE_MAP, normalizeOpeningFamily } from './openingFamilySideMap';
 
 const LICHESS_OPENINGS_TSV = [openingsA, openingsB, openingsC, openingsD, openingsE].join('\n');
 // Safe upper bound used only for early guard checks before the lazy index is built.
@@ -105,6 +106,19 @@ function buildOpeningPrefixIndex() {
     }
   }
 
+  const missingFamilies = new Set();
+  for (const entry of entries) {
+    const family = extractOpeningFamily(entry.name);
+    if (!(family in OPENING_FAMILY_SIDE_MAP)) {
+      missingFamilies.add(family);
+    }
+  }
+
+  if (missingFamilies.size) {
+    const preview = Array.from(missingFamilies).sort().slice(0, 8).join(', ');
+    throw new Error(`Opening side map is missing ${missingFamilies.size} family entries: ${preview}`);
+  }
+
   return { entries, prefixMap, maxPly };
 }
 
@@ -153,6 +167,32 @@ function chooseOpeningLabel(matches, currentPly) {
   return `${chosen.name} (${chosen.eco})`;
 }
 
+function buildOpeningCatalog(entries) {
+  const byName = new Map();
+  for (const entry of entries) {
+    const existing = byName.get(entry.name);
+    if (existing) {
+      existing.count += 1;
+      existing.minPly = Math.min(existing.minPly, entry.ply);
+      continue;
+    }
+    byName.set(entry.name, {
+      value: entry.name,
+      label: `${entry.name} (${entry.eco})`,
+      count: 1,
+      minPly: entry.ply
+    });
+  }
+
+  return Array.from(byName.values())
+    .sort((a, b) => a.value.localeCompare(b.value));
+}
+
+function extractOpeningFamily(name) {
+  const family = String(name || '').split(':')[0]?.trim() || '';
+  return normalizeOpeningFamily(family);
+}
+
 export function findMatchingCommonOpening(lineUciMoves) {
   if (!Array.isArray(lineUciMoves) || !lineUciMoves.length || lineUciMoves.length > COMMON_OPENING_MAX_PLY) {
     return null;
@@ -198,6 +238,40 @@ export function findCurrentOpening(lineUciMoves) {
     matches,
     label: chooseOpeningLabel(matches, lineUciMoves.length)
   };
+}
+
+export function getOpeningRepertoireOptions() {
+  const { entries } = ensureOpeningIndex();
+  return buildOpeningCatalog(entries);
+}
+
+export function getOpeningRepertoireLine(openingName = 'random') {
+  const { entries } = ensureOpeningIndex();
+  const source = openingName && openingName !== 'random'
+    ? entries.filter((entry) => entry.name === openingName)
+    : entries;
+
+  if (!source.length) {
+    return null;
+  }
+
+  const chosen = source[Math.floor(Math.random() * source.length)];
+  return {
+    name: chosen.name,
+    eco: chosen.eco,
+    label: `${chosen.name} (${chosen.eco})`,
+    moves: [...chosen.uciMoves]
+  };
+}
+
+export function recommendedTrainingSideForOpening(opening) {
+  const name = String(opening?.name || opening?.label || '');
+  if (!name.trim()) {
+    return 'w';
+  }
+
+  const family = extractOpeningFamily(name);
+  return OPENING_FAMILY_SIDE_MAP[family] || 'w';
 }
 
 export { COMMON_OPENING_MAX_PLY };

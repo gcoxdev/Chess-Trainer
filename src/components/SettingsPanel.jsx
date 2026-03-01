@@ -7,8 +7,14 @@ export function SettingsPanel({
   settingsLocked,
   setGameMode,
   randomFenMode,
+  repertoireMode,
   randomFenPhase,
   setRandomFenPhase,
+  repertoireOpening,
+  setRepertoireOpening,
+  repertoireOpeningOptions,
+  repertoireSide,
+  setRepertoireSide,
   puzzleMode,
   puzzleTheme,
   setPuzzleTheme,
@@ -58,6 +64,7 @@ export function SettingsPanel({
           <select value={gameMode} disabled={settingsLocked} onChange={(e) => setGameMode(e.target.value)}>
             <option value="classic">Classic</option>
             <option value="random-fen">Random Position</option>
+            <option value="repertoire">Openings</option>
             <option value="puzzle">Puzzle</option>
             <option value="freeplay">Freeplay</option>
           </select>
@@ -77,6 +84,34 @@ export function SettingsPanel({
               <option value="endgame">Endgame</option>
             </select>
           </label>
+        ) : repertoireMode ? (
+          <>
+            <label>
+              Opening Line Set
+              <select
+                value={repertoireOpening}
+                disabled={settingsLocked}
+                onChange={(e) => setRepertoireOpening(e.target.value)}
+              >
+                <option value="random">Random Opening</option>
+                {repertoireOpeningOptions.map((opening) => (
+                  <option key={opening.value} value={opening.value}>{opening.label}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Opening Side
+              <select
+                value={repertoireSide}
+                disabled={settingsLocked}
+                onChange={(e) => setRepertoireSide(e.target.value)}
+              >
+                <option value="auto">Auto (Recommended)</option>
+                <option value="white">White</option>
+                <option value="black">Black</option>
+              </select>
+            </label>
+          </>
         ) : puzzleMode ? (
           <label>
             Puzzle Theme
@@ -96,7 +131,7 @@ export function SettingsPanel({
             Skill Level
             <select
               value={engineSkillLevel}
-              disabled={settingsLocked || freeplayMode || puzzleMode}
+              disabled={settingsLocked || freeplayMode || puzzleMode || repertoireMode}
               onChange={(e) => setEngineSkillLevel(clamp(Number(e.target.value || 5), 0, 20))}
             >
               {Array.from({ length: 21 }, (_, i) => (
@@ -108,7 +143,7 @@ export function SettingsPanel({
           </label>
         )}
 
-        {!puzzleMode ? (
+        {!puzzleMode && !repertoireMode ? (
           <label>
             Top N
             <input
@@ -122,7 +157,7 @@ export function SettingsPanel({
           </label>
         ) : null}
 
-        {!randomFenMode && !freeplayMode && !puzzleMode ? (
+        {!randomFenMode && !freeplayMode && !puzzleMode && !repertoireMode ? (
           <label>
             Allow Common Openings
             <input
@@ -146,7 +181,7 @@ export function SettingsPanel({
           </label>
         ) : null}
 
-        {!puzzleMode ? (
+        {!puzzleMode && !repertoireMode ? (
           <label>
             Play As
             <select value={playerColor} disabled={settingsLocked} onChange={(e) => setPlayerColor(e.target.value)}>
@@ -201,7 +236,7 @@ export function SettingsPanel({
           />
         </label>
 
-        {!freeplayMode ? (
+        {!freeplayMode && !repertoireMode ? (
           <label>
             Time-Based Scoring
             <input
