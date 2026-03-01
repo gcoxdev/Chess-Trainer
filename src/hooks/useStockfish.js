@@ -31,7 +31,8 @@ export function useStockfish() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    const worker = new Worker('/stockfish.js');
+    const workerUrl = `${import.meta.env.BASE_URL}stockfish.js`;
+    const worker = new Worker(workerUrl);
     workerRef.current = worker;
 
     const rejectPending = (message) => {

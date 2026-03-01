@@ -615,6 +615,7 @@ export default function App() {
   const puzzlePoolCacheRef = useRef(new Map());
   const invalidFlashTimeoutsRef = useRef([]);
   const previousMoveHistoryLenRef = useRef(0);
+  const currentPuzzlePendingScoreRef = useRef(0);
 
   const { ready, error, configure, beginNewGame, evaluateTopMoves, chooseMoveFast } = useStockfish();
 
@@ -782,6 +783,10 @@ export default function App() {
       // Ignore storage errors (private mode, quota, etc.)
     }
   }, [scoreHistory]);
+
+  useEffect(() => {
+    currentPuzzlePendingScoreRef.current = currentPuzzlePendingScore;
+  }, [currentPuzzlePendingScore]);
 
   const classicHistoryForSelectedSkill = useMemo(
     () => {
@@ -1295,34 +1300,39 @@ export default function App() {
 
     const getPiece = (color, piece) => (props) => (
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%" style={props?.svgStyle}>
-        <defs>
-          <linearGradient id={`ct-piece-bg-${pieceStyle}-${color}-${piece}`} x1="0" y1="0" x2="1" y2="1">
-            {isGlass ? (
-              <>
-                <stop offset="0%" stopColor={color === 'w' ? '#ffffff' : '#5a6b89'} />
-                <stop offset="55%" stopColor={color === 'w' ? '#eef4ff' : '#27344f'} />
-                <stop offset="100%" stopColor={color === 'w' ? '#d6e1f6' : '#161f32'} />
-              </>
-            ) : (
-              <>
-                <stop offset="0%" stopColor={color === 'w' ? '#fffdf7' : '#5e5450'} />
-                <stop offset="55%" stopColor={color === 'w' ? '#efe7d7' : '#2f2a29'} />
-                <stop offset="100%" stopColor={color === 'w' ? '#d7c7ad' : '#1a1717'} />
-              </>
-            )}
-          </linearGradient>
-        </defs>
         <rect
           x="13"
           y="13"
           width="74"
           height="74"
           rx={borderRadius === '28%' ? 21 : 16}
-          fill={`url(#ct-piece-bg-${pieceStyle}-${color}-${piece})`}
+          fill={isGlass
+            ? (color === 'w' ? '#dfe9f8' : '#243450')
+            : (color === 'w' ? '#e7d8c0' : '#312826')}
+        />
+        <rect
+          x="13"
+          y="13"
+          width="74"
+          height="74"
+          rx={borderRadius === '28%' ? 21 : 16}
+          fill={isGlass
+            ? (color === 'w' ? 'rgba(255,255,255,0.36)' : 'rgba(255,255,255,0.07)')
+            : (color === 'w' ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.18)')}
           stroke={isGlass
             ? (color === 'w' ? 'rgba(21,36,57,0.35)' : 'rgba(235,241,255,0.2)')
             : (color === 'w' ? 'rgba(48,39,26,0.34)' : 'rgba(245,219,182,0.2)')}
           strokeWidth="1.5"
+        />
+        <rect
+          x="16"
+          y="16"
+          width="68"
+          height="26"
+          rx={borderRadius === '28%' ? 16 : 12}
+          fill={isGlass
+            ? (color === 'w' ? 'rgba(255,255,255,0.44)' : 'rgba(255,255,255,0.12)')
+            : (color === 'w' ? 'rgba(255,250,240,0.2)' : 'rgba(255,220,180,0.05)')}
         />
         {isGlass ? (
           <ellipse cx="39" cy="31" rx="24" ry="12" fill={color === 'w' ? 'rgba(255,255,255,0.42)' : 'rgba(255,255,255,0.16)'} />
@@ -1549,6 +1559,7 @@ export default function App() {
     setCurrentPuzzleMoveIndex(0);
     setCurrentPuzzlePlayerMoveCount(0);
     setCurrentPuzzlePendingScore(0);
+    currentPuzzlePendingScoreRef.current = 0;
     setRandomPositionsCompleted(0);
     setPuzzlesCompleted(0);
     setPuzzleHintUnlocked(false);
@@ -1691,6 +1702,7 @@ export default function App() {
     setCurrentPuzzleMoveIndex(startIndex);
     setCurrentPuzzlePlayerMoveCount(playerMoveCount);
     setCurrentPuzzlePendingScore(0);
+    currentPuzzlePendingScoreRef.current = 0;
     setAwaitingNextPuzzle(false);
     setPuzzleHintUnlocked(false);
     setShowPuzzleHint(false);
@@ -2005,7 +2017,9 @@ export default function App() {
         flashInvalidMoveSquares(sourceSquare, targetSquare);
         setPuzzleHintUnlocked(true);
         setShowPuzzleHint(false);
-        setCurrentPuzzlePendingScore((prev) => prev - 1);
+        const nextPendingScore = currentPuzzlePendingScoreRef.current - 1;
+        currentPuzzlePendingScoreRef.current = nextPendingScore;
+        setCurrentPuzzlePendingScore(nextPendingScore);
         setScore((prev) => ({ ...prev, errors: prev.errors + 1 }));
         return false;
       }
@@ -2026,7 +2040,9 @@ export default function App() {
           elapsedMs
         }
       ]);
-      setCurrentPuzzlePendingScore((prev) => prev + timeFactor);
+      const pendingAfterPlayerMove = currentPuzzlePendingScoreRef.current + timeFactor;
+      currentPuzzlePendingScoreRef.current = pendingAfterPlayerMove;
+      setCurrentPuzzlePendingScore(pendingAfterPlayerMove);
 
       const nextIndex = currentPuzzleMoveIndex + 1;
       const totalMoves = currentPuzzle?.moves?.length ?? 0;
@@ -2035,10 +2051,11 @@ export default function App() {
         setCurrentPuzzleMoveIndex(nextIndex);
         setScore((prev) => ({
           ...prev,
-          earned: prev.earned + (currentPuzzlePendingScore + 1),
+          earned: prev.earned + pendingAfterPlayerMove,
           possible: prev.possible + currentPuzzlePlayerMoveCount
         }));
         setCurrentPuzzlePendingScore(0);
+        currentPuzzlePendingScoreRef.current = 0;
         setAwaitingNextPuzzle(true);
         setPuzzlesCompleted((prev) => prev + 1);
         setStatus(`Puzzle solved.${timedMoveSuffix} Click Next Puzzle.`);
@@ -2083,10 +2100,11 @@ export default function App() {
         if (snapshotNextIndex + 1 >= snapshotTotalMoves || liveBoard.isGameOver()) {
           setScore((prev) => ({
             ...prev,
-            earned: prev.earned + (currentPuzzlePendingScore + 1),
+            earned: prev.earned + pendingAfterPlayerMove,
             possible: prev.possible + currentPuzzlePlayerMoveCount
           }));
           setCurrentPuzzlePendingScore(0);
+          currentPuzzlePendingScoreRef.current = 0;
           setAwaitingNextPuzzle(true);
           setPuzzlesCompleted((prev) => prev + 1);
           setStatus(`Puzzle solved.${timedMoveSuffix} Click Next Puzzle.`);
@@ -2342,7 +2360,7 @@ export default function App() {
     void tryPlayerMove(sourceSquare, targetSquare, promotionPiece);
   };
 
-  const onDrop = (sourceSquare, targetSquare, piece) => {
+  const onDrop = (sourceSquare, targetSquare) => {
     if (!sourceSquare || !targetSquare) {
       setDragSourceSquare('');
       return false;
@@ -2558,7 +2576,7 @@ export default function App() {
     arrows: chessboardArrows,
     onArrowsChange: ({ arrows }) => handleArrowsChange(arrows),
     onPieceDrag: ({ square }) => onPieceDragBegin({ square }),
-    onPieceDrop: ({ piece, sourceSquare, targetSquare }) => onDrop(sourceSquare, targetSquare, piece?.pieceType),
+    onPieceDrop: ({ sourceSquare, targetSquare }) => onDrop(sourceSquare, targetSquare),
     onSquareClick: ({ square }) => onSquareClick(square),
     onSquareRightClick: ({ square }) => onSquareRightClick(square),
     onSquareMouseUp: () => onPieceDragEnd()
