@@ -2621,14 +2621,16 @@ export default function App() {
                 Flip Board
               </button>
             ) : null}
-            <label className="board-toggle">
-              <span>Flip Each Turn</span>
-              <input
-                type="checkbox"
-                checked={autoFlipBoard}
-                onChange={(e) => setAutoFlipBoard(e.target.checked)}
-              />
-            </label>
+            {freeplayMode ? (
+              <label className="board-toggle">
+                <span>Flip Each Turn</span>
+                <input
+                  type="checkbox"
+                  checked={autoFlipBoard}
+                  onChange={(e) => setAutoFlipBoard(e.target.checked)}
+                />
+              </label>
+            ) : null}
             {isGameStarted && !randomFenMode && !puzzleMode ? (
               <button
                 type="button"
