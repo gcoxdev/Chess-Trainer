@@ -1074,6 +1074,7 @@ export default function App() {
         ply,
         humanMove,
         currentTopMoves,
+        bestMove,
         testGame,
         timedMoveSuffix,
         useTimeScoring,

@@ -156,6 +156,7 @@ export function handleFreeplayMove({
   ply,
   humanMove,
   currentTopMoves,
+  bestMove,
   testGame,
   timedMoveSuffix,
   useTimeScoring,
@@ -193,7 +194,7 @@ export function handleFreeplayMove({
         rank: rank || null,
         label: rankText || `Outside Top ${topN}`,
         points: earnedPoints,
-        bestMove: currentTopMoves[0],
+        bestMove,
         bestMoveUci: currentTopMoves[0] || '',
         timeFactor,
         elapsedMs
