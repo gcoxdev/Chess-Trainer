@@ -40,6 +40,25 @@ import {
 import { BOARD_THEMES, PIECE_SYMBOLS, UNICODE_PIECE_STYLES, createCustomPieces } from './lib/pieceThemes';
 
 export default function App() {
+  const [darkMode, setDarkMode] = useState(() => {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+
+    try {
+      const saved = window.localStorage.getItem('chess-trainer-dark-mode');
+      if (saved === '1') {
+        return true;
+      }
+      if (saved === '0') {
+        return false;
+      }
+    } catch {
+      // ignore storage errors and fall back to media query
+    }
+
+    return Boolean(window.matchMedia?.('(prefers-color-scheme: dark)').matches);
+  });
   const [game, setGame] = useState(() => new Chess());
   const [engineSkillLevel, setEngineSkillLevel] = useState(5);
   const [topN, setTopN] = useState(3);
@@ -119,6 +138,18 @@ export default function App() {
     // configure is intentionally omitted to prevent reconfiguration on each render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, engineSkillLevel]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('chess-trainer-dark-mode', darkMode ? '1' : '0');
+    } catch {
+      // ignore storage errors
+    }
+
+    if (typeof document !== 'undefined') {
+      document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
+    }
+  }, [darkMode]);
 
   const clampedViewedPly = useMemo(() => clamp(viewedPly, 0, moveHistory.length), [viewedPly, moveHistory.length]);
   const viewingHistory = isGameStarted && clampedViewedPly < moveHistory.length;
@@ -1494,6 +1525,8 @@ export default function App() {
     UNICODE_PIECE_STYLES,
     showValidMoves,
     setShowValidMoves,
+    darkMode,
+    setDarkMode,
     useTimeScoring,
     setUseTimeScoring,
     isGameStarted,
@@ -1566,7 +1599,7 @@ export default function App() {
   };
 
   return (
-    <div className="app">
+    <div className={`app ${darkMode ? 'theme-dark' : 'theme-light'}`}>
       <div className="board-status" ref={boardStatusRef}>
         <div className="board-head">
           <div className="board-title">Chess Trainer</div>

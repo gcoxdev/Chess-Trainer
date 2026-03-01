@@ -35,6 +35,8 @@ export function SettingsPanel({
   UNICODE_PIECE_STYLES,
   showValidMoves,
   setShowValidMoves,
+  darkMode,
+  setDarkMode,
   useTimeScoring,
   setUseTimeScoring,
   isGameStarted,
@@ -187,6 +189,15 @@ export function SettingsPanel({
             type="checkbox"
             checked={showValidMoves}
             onChange={(e) => setShowValidMoves(e.target.checked)}
+          />
+        </label>
+
+        <label>
+          Dark Mode
+          <input
+            type="checkbox"
+            checked={darkMode}
+            onChange={(e) => setDarkMode(e.target.checked)}
           />
         </label>
 
