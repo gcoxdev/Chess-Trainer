@@ -1459,6 +1459,112 @@ export default function App() {
     onSquareRightClick
   });
 
+  const settingsPanelProps = {
+    collapsed: collapsedPanels.settings,
+    onToggle: () => togglePanel('settings'),
+    gameMode,
+    settingsLocked,
+    setGameMode,
+    randomFenMode,
+    randomFenPhase,
+    setRandomFenPhase,
+    puzzleMode,
+    puzzleTheme,
+    setPuzzleTheme,
+    puzzleManifest,
+    formatPuzzleThemeLabel,
+    engineSkillLevel,
+    freeplayMode,
+    setEngineSkillLevel,
+    clamp,
+    approximateEloForSkillLevel,
+    topN,
+    setTopN,
+    allowCommonOpenings,
+    setAllowCommonOpenings,
+    freeplayAnalyzeMoves,
+    setFreeplayAnalyzeMoves,
+    playerColor,
+    setPlayerColor,
+    boardStyle,
+    setBoardStyle,
+    BOARD_THEMES,
+    pieceStyle,
+    setPieceStyle,
+    UNICODE_PIECE_STYLES,
+    showValidMoves,
+    setShowValidMoves,
+    useTimeScoring,
+    setUseTimeScoring,
+    isGameStarted,
+    startGame,
+    resetToSetup,
+    ready,
+    isProcessing
+  };
+
+  const scorePanelProps = {
+    collapsed: collapsedPanels.score,
+    onToggle: () => togglePanel('score'),
+    status,
+    freeplayMode,
+    score,
+    scorePercent,
+    useTimeScoring,
+    displayedTotalTimedMs,
+    randomFenMode,
+    puzzleMode,
+    currentOpening,
+    randomPositionsCompleted,
+    puzzlesCompleted,
+    puzzleThemeDisplay,
+    freeplayAnalyzeMoves,
+    topN,
+    scoreModeLabel,
+    bestClassicScore,
+    bestRandomSession,
+    bestPuzzleSession,
+    randomFenPhase,
+    puzzleTheme,
+    showScoreHistory,
+    onToggleScoreHistory: () => setShowScoreHistory((prev) => !prev),
+    activeScoreHistoryTitle,
+    clearActiveScoreHistory,
+    clearHistoryButtonTitle,
+    clearHistoryAriaLabel,
+    activeScoreHistory,
+    displayedScoreHistory,
+    lastEvaluatedMoves,
+    showLastEvaluated,
+    onToggleLastEvaluated: () => setShowLastEvaluated((prev) => !prev),
+    puzzleHintUnlocked,
+    nextPuzzleHint,
+    showPuzzleHint,
+    onTogglePuzzleHint: () => setShowPuzzleHint((prev) => !prev),
+    error
+  };
+
+  const moveListPanelProps = {
+    collapsed: collapsedPanels.moves,
+    onToggle: () => togglePanel('moves'),
+    moveHistory,
+    clampedViewedPly,
+    viewingHistory,
+    goToFirstMove,
+    goToPreviousMove,
+    goToNextMove,
+    goToLatestMove,
+    moveRows,
+    moveListRef,
+    moveRowTemplate,
+    resolvedPlayerColor,
+    whiteHeaderLabel,
+    blackHeaderLabel,
+    showWhiteRankColumn,
+    showBlackRankColumn,
+    formatMoveMetaDisplay
+  };
+
   return (
     <div className="app">
       <div className="board-status" ref={boardStatusRef}>
@@ -1587,111 +1693,9 @@ export default function App() {
       )}
 
       <div className="left-column">
-        <SettingsPanel
-          collapsed={collapsedPanels.settings}
-          onToggle={() => togglePanel('settings')}
-          gameMode={gameMode}
-          settingsLocked={settingsLocked}
-          setGameMode={setGameMode}
-          randomFenMode={randomFenMode}
-          randomFenPhase={randomFenPhase}
-          setRandomFenPhase={setRandomFenPhase}
-          puzzleMode={puzzleMode}
-          puzzleTheme={puzzleTheme}
-          setPuzzleTheme={setPuzzleTheme}
-          puzzleManifest={puzzleManifest}
-          formatPuzzleThemeLabel={formatPuzzleThemeLabel}
-          engineSkillLevel={engineSkillLevel}
-          freeplayMode={freeplayMode}
-          setEngineSkillLevel={setEngineSkillLevel}
-          clamp={clamp}
-          approximateEloForSkillLevel={approximateEloForSkillLevel}
-          topN={topN}
-          setTopN={setTopN}
-          allowCommonOpenings={allowCommonOpenings}
-          setAllowCommonOpenings={setAllowCommonOpenings}
-          freeplayAnalyzeMoves={freeplayAnalyzeMoves}
-          setFreeplayAnalyzeMoves={setFreeplayAnalyzeMoves}
-          playerColor={playerColor}
-          setPlayerColor={setPlayerColor}
-          boardStyle={boardStyle}
-          setBoardStyle={setBoardStyle}
-          BOARD_THEMES={BOARD_THEMES}
-          pieceStyle={pieceStyle}
-          setPieceStyle={setPieceStyle}
-          UNICODE_PIECE_STYLES={UNICODE_PIECE_STYLES}
-          showValidMoves={showValidMoves}
-          setShowValidMoves={setShowValidMoves}
-          useTimeScoring={useTimeScoring}
-          setUseTimeScoring={setUseTimeScoring}
-          isGameStarted={isGameStarted}
-          startGame={startGame}
-          resetToSetup={resetToSetup}
-          ready={ready}
-          isProcessing={isProcessing}
-        />
-
-        <ScorePanel
-          collapsed={collapsedPanels.score}
-          onToggle={() => togglePanel('score')}
-          status={status}
-          freeplayMode={freeplayMode}
-          score={score}
-          scorePercent={scorePercent}
-          useTimeScoring={useTimeScoring}
-          displayedTotalTimedMs={displayedTotalTimedMs}
-          randomFenMode={randomFenMode}
-          puzzleMode={puzzleMode}
-          currentOpening={currentOpening}
-          randomPositionsCompleted={randomPositionsCompleted}
-          puzzlesCompleted={puzzlesCompleted}
-          puzzleThemeDisplay={puzzleThemeDisplay}
-          freeplayAnalyzeMoves={freeplayAnalyzeMoves}
-          topN={topN}
-          scoreModeLabel={scoreModeLabel}
-          bestClassicScore={bestClassicScore}
-          bestRandomSession={bestRandomSession}
-          bestPuzzleSession={bestPuzzleSession}
-          randomFenPhase={randomFenPhase}
-          puzzleTheme={puzzleTheme}
-          showScoreHistory={showScoreHistory}
-          onToggleScoreHistory={() => setShowScoreHistory((prev) => !prev)}
-          activeScoreHistoryTitle={activeScoreHistoryTitle}
-          clearActiveScoreHistory={clearActiveScoreHistory}
-          clearHistoryButtonTitle={clearHistoryButtonTitle}
-          clearHistoryAriaLabel={clearHistoryAriaLabel}
-          activeScoreHistory={activeScoreHistory}
-          displayedScoreHistory={displayedScoreHistory}
-          lastEvaluatedMoves={lastEvaluatedMoves}
-          showLastEvaluated={showLastEvaluated}
-          onToggleLastEvaluated={() => setShowLastEvaluated((prev) => !prev)}
-          puzzleHintUnlocked={puzzleHintUnlocked}
-          nextPuzzleHint={nextPuzzleHint}
-          showPuzzleHint={showPuzzleHint}
-          onTogglePuzzleHint={() => setShowPuzzleHint((prev) => !prev)}
-          error={error}
-        />
-
-        <MoveListPanel
-          collapsed={collapsedPanels.moves}
-          onToggle={() => togglePanel('moves')}
-          moveHistory={moveHistory}
-          clampedViewedPly={clampedViewedPly}
-          viewingHistory={viewingHistory}
-          goToFirstMove={goToFirstMove}
-          goToPreviousMove={goToPreviousMove}
-          goToNextMove={goToNextMove}
-          goToLatestMove={goToLatestMove}
-          moveRows={moveRows}
-          moveListRef={moveListRef}
-          moveRowTemplate={moveRowTemplate}
-          resolvedPlayerColor={resolvedPlayerColor}
-          whiteHeaderLabel={whiteHeaderLabel}
-          blackHeaderLabel={blackHeaderLabel}
-          showWhiteRankColumn={showWhiteRankColumn}
-          showBlackRankColumn={showBlackRankColumn}
-          formatMoveMetaDisplay={formatMoveMetaDisplay}
-        />
+        <SettingsPanel {...settingsPanelProps} />
+        <ScorePanel {...scorePanelProps} />
+        <MoveListPanel {...moveListPanelProps} />
       </div>
     </div>
   );

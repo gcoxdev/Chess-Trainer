@@ -1,3 +1,4 @@
+import { Chess } from 'chess.js';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import App from './App';
@@ -5,17 +6,47 @@ import App from './App';
 const evaluateTopMovesMock = vi.fn(async ({ topN }) => ({
   topMoves: ['d2d4', 'g1f3', 'c2c4'].slice(0, topN)
 }));
+const generateRandomTrainingBoardMock = vi.fn(async () => new Chess());
+let puzzlePoolData = [
+  {
+    fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1',
+    moves: ['e7e5', 'e2e4', 'g8f6'],
+    themes: ['opening']
+  }
+];
+
+vi.mock('./lib/chessCore', async () => {
+  const actual = await vi.importActual('./lib/chessCore');
+  return {
+    ...actual,
+    generateRandomTrainingBoard: (...args) => generateRandomTrainingBoardMock(...args)
+  };
+});
 
 vi.mock('react-chessboard', () => {
   function ChessboardMock({ options }) {
+    const drops = ['e2e4', 'e2e3', 'e7e5', 'a7a8'];
+    const clicks = ['a7', 'a8'];
     return (
       <div data-testid="mock-board">
-        <button type="button" onClick={() => options.onPieceDrop?.({ sourceSquare: 'e2', targetSquare: 'e4' })}>
-          drop-e2e4
-        </button>
-        <button type="button" onClick={() => options.onPieceDrop?.({ sourceSquare: 'e7', targetSquare: 'e5' })}>
-          drop-e7e5
-        </button>
+        {drops.map((uci) => (
+          <button
+            key={uci}
+            type="button"
+            onClick={() => options.onPieceDrop?.({ sourceSquare: uci.slice(0, 2), targetSquare: uci.slice(2, 4) })}
+          >
+            {`drop-${uci}`}
+          </button>
+        ))}
+        {clicks.map((square) => (
+          <button
+            key={square}
+            type="button"
+            onClick={() => options.onSquareClick?.({ square })}
+          >
+            {`click-${square}`}
+          </button>
+        ))}
         <div data-testid="can-drag">{String(options.canDragPiece?.())}</div>
       </div>
     );
@@ -41,11 +72,41 @@ vi.mock('./hooks/useStockfish', () => ({
 describe('App integration flows', () => {
   beforeEach(() => {
     evaluateTopMovesMock.mockClear();
+    generateRandomTrainingBoardMock.mockReset();
+    generateRandomTrainingBoardMock.mockImplementation(async () => new Chess());
+    puzzlePoolData = [
+      {
+        fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1',
+        moves: ['e7e5', 'e2e4', 'g8f6'],
+        themes: ['opening']
+      }
+    ];
     window.localStorage.clear();
+    global.fetch = vi.fn(async (url) => {
+      if (String(url).includes('/puzzles/manifest.json')) {
+        return {
+          ok: true,
+          json: async () => ({
+            randomFile: 'random-test.json',
+            themes: []
+          })
+        };
+      }
+
+      if (String(url).includes('/puzzles/random-test.json')) {
+        return {
+          ok: true,
+          json: async () => puzzlePoolData
+        };
+      }
+
+      return { ok: false, json: async () => ({}) };
+    });
   });
 
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
   });
 
   test('freeplay shows compact outside-top rank with best-move hint', async () => {
@@ -99,6 +160,83 @@ describe('App integration flows', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/Review mode active\. Click Latest/i)).toBeInTheDocument();
+    });
+  });
+
+  test('random mode enables Next Position only after a scored move', async () => {
+    evaluateTopMovesMock.mockImplementation(async ({ topN }) => ({
+      topMoves: ['e2e4', 'g1f3', 'd2d4'].slice(0, topN)
+    }));
+    generateRandomTrainingBoardMock.mockImplementation(async () => new Chess());
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText(/Game Mode/i), {
+      target: { value: 'random-fen' }
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Start Game/i }));
+
+    const nextButton = await screen.findByRole('button', { name: /Next Position/i });
+    expect(nextButton).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'drop-e2e4' }));
+
+    await waitFor(() => {
+      expect(nextButton).toBeEnabled();
+    });
+  });
+
+  test('puzzle mode unlocks and reveals hint after an incorrect move', async () => {
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText(/Game Mode/i), {
+      target: { value: 'puzzle' }
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Start Game/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Puzzle mode started\./i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'drop-e2e3' }));
+
+    const revealButton = await screen.findByRole('button', { name: /Reveal Puzzle Hint/i });
+    fireEvent.click(revealButton);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Next puzzle move hint:/i)).toBeInTheDocument();
+      expect(screen.getByText(/^e4$/i)).toBeInTheDocument();
+    });
+  });
+
+  test('puzzle promotion auto-applies the forced solution move', async () => {
+    puzzlePoolData = [
+      {
+        fen: '7k/P7/8/8/8/8/8/K7 w - - 0 1',
+        moves: ['a7a8q'],
+        themes: ['promotion']
+      }
+    ];
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText(/Game Mode/i), {
+      target: { value: 'puzzle' }
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Start Game/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Puzzle mode started\./i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'drop-a7a8' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /Choose promotion piece/i })).not.toBeInTheDocument();
+      expect(screen.getByText(/a8=Q\+/)).toBeInTheDocument();
     });
   });
 });
