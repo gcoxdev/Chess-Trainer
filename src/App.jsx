@@ -1,554 +1,43 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Chess } from 'chess.js';
 import { Chessboard, defaultPieces } from 'react-chessboard';
+import { MoveListPanel } from './components/MoveListPanel';
+import { ScorePanel } from './components/ScorePanel';
+import { SettingsPanel } from './components/SettingsPanel';
+import { useChessboardOptions } from './hooks/useChessboardOptions';
+import { useGameFlow } from './hooks/useGameFlow';
 import { useStockfish } from './hooks/useStockfish';
+import { useResponsiveBoardSize } from './hooks/useResponsiveBoardSize';
+import { useScoreHistory } from './hooks/useScoreHistory';
 import { COMMON_OPENING_MAX_PLY, findCurrentOpening, findMatchingCommonOpening } from './data/commonOpenings';
-
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
-}
-
-function toMoveString(move) {
-  return `${move.from}${move.to}${move.promotion ?? ''}`;
-}
-
-function ordinal(rank) {
-  const mod10 = rank % 10;
-  const mod100 = rank % 100;
-  if (mod10 === 1 && mod100 !== 11) return `${rank}st`;
-  if (mod10 === 2 && mod100 !== 12) return `${rank}nd`;
-  if (mod10 === 3 && mod100 !== 13) return `${rank}rd`;
-  return `${rank}th`;
-}
-
-function rankLabel(rank) {
-  return rank === 1 ? 'Top Move Played' : `${ordinal(rank)} Best Move Played`;
-}
-
-function pointsForRank(rank, topN) {
-  return (Math.max(1, topN - rank + 1)) / Math.max(1, topN);
-}
-
-function penaltyForMiss(topN) {
-  return 1 / Math.max(1, topN);
-}
-
-function formatScoreValue(value) {
-  const n = Number(value || 0);
-  if (Number.isInteger(n)) return String(n);
-  return n.toFixed(2).replace(/\.?0+$/, '');
-}
-
-function formatElapsedSeconds(ms) {
-  return `${Math.max(0, Math.round((ms || 0) / 1000))}s`;
-}
-
-function formatDurationMs(ms) {
-  const totalSeconds = Math.max(0, Math.round((ms || 0) / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${String(seconds).padStart(2, '0')}`;
-}
-
-function getTimeScoreFactor(elapsedMs) {
-  const elapsedSeconds = Math.max(0, (elapsedMs || 0) / 1000);
-  const graceSeconds = 3;
-  if (elapsedSeconds <= graceSeconds) {
-    return 1;
-  }
-
-  // After a short grace period, points decay smoothly with a 20s half-life.
-  const decaySeconds = elapsedSeconds - graceSeconds;
-  const factor = Math.pow(0.5, decaySeconds / 20);
-  return clamp(factor, 0.25, 1);
-}
-
-function historyBucketKey(baseKey, scoreMode) {
-  return `${baseKey}|${scoreMode}`;
-}
-
-function formatTimedPointsSuffix({ useTimeScoring, elapsedMs, timeFactor }) {
-  if (!useTimeScoring) {
-    return '';
-  }
-  return ` (time x${formatScoreValue(timeFactor)}, ${formatElapsedSeconds(elapsedMs)})`;
-}
-
-function approximateEloForSkillLevel(level) {
-  const minElo = 1320;
-  const maxElo = 3190;
-  return Math.round(minElo + ((maxElo - minElo) * (level / 20)));
-}
-
-function formatPuzzleThemeLabel(theme) {
-  if (!theme) return '';
-  return String(theme)
-    .replace(/([a-z])([A-Z])/g, '$1 $2')
-    .replace(/([A-Za-z])(\d)/g, '$1 $2')
-    .replace(/(\d)([A-Za-z])/g, '$1 $2')
-    .replace(/[_-]+/g, ' ')
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
-}
-
-function randomInt(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-function yieldToMainThread() {
-  return new Promise((resolve) => {
-    setTimeout(resolve, 0);
-  });
-}
-
-function countPiecesFromFen(board) {
-  return (board.fen().split(' ')[0].match(/[prnbqkPRNBQK]/g) || []).length;
-}
-
-function replayBoardFromMoves(moves, startingFen = START_FEN) {
-  const board = new Chess(startingFen);
-  for (const move of moves || []) {
-    const applied = board.move({
-      from: move.from,
-      to: move.to,
-      promotion: move.promotion
-    });
-    if (!applied) {
-      return null;
-    }
-  }
-  return board;
-}
-
-function bestMoveSanFromHistory(historyMoves, bestMoveUci) {
-  if (!bestMoveUci) {
-    return '';
-  }
-
-  const board = replayBoardFromMoves(historyMoves);
-  if (!board) {
-    return bestMoveUci;
-  }
-
-  const parsed = {
-    from: bestMoveUci.slice(0, 2),
-    to: bestMoveUci.slice(2, 4),
-    promotion: bestMoveUci[4]
-  };
-  const applied = board.move(parsed);
-  return applied?.san || bestMoveUci;
-}
-
-function moveSanFromFen(fen, moveUci) {
-  if (!moveUci || !/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(moveUci)) {
-    return '';
-  }
-
-  try {
-    const board = new Chess(fen);
-    const applied = board.move({
-      from: moveUci.slice(0, 2),
-      to: moveUci.slice(2, 4),
-      promotion: moveUci[4]
-    });
-    return applied?.san || moveUci;
-  } catch {
-    return moveUci;
-  }
-}
-
-function formatMoveMetaDisplay(meta) {
-  if (!meta) {
-    return '';
-  }
-  if (meta.rank === 1) {
-    return '#1';
-  }
-  if (meta.rank && meta.rank > 1) {
-    return meta.bestMove ? `#${meta.rank} - ${meta.bestMove}` : `#${meta.rank}`;
-  }
-  if (meta.openingAllowed) {
-    return 'Opening';
-  }
-  return '';
-}
-
-const SCORE_HISTORY_STORAGE_KEY = 'chess-trainer-score-history-v1';
-
-function loadScoreHistory() {
-  try {
-    const raw = window.localStorage.getItem(SCORE_HISTORY_STORAGE_KEY);
-    if (!raw) {
-      return { classicBySkill: {}, randomByPhase: {}, puzzleByTheme: {} };
-    }
-    const parsed = JSON.parse(raw);
-    const classicBySkill = parsed?.classicBySkill && typeof parsed.classicBySkill === 'object'
-      ? parsed.classicBySkill
-      : {};
-    const randomByPhase = parsed?.randomByPhase && typeof parsed.randomByPhase === 'object'
-      ? parsed.randomByPhase
-      : {};
-    const puzzleByTheme = parsed?.puzzleByTheme && typeof parsed.puzzleByTheme === 'object'
-      ? parsed.puzzleByTheme
-      : {};
-
-    // Backward compatibility: older versions stored classic as a flat array.
-    if (Array.isArray(parsed?.classic) && parsed.classic.length && !Object.keys(classicBySkill).length) {
-      // Migrate old flat classic history into the current default skill bucket so it remains visible.
-      classicBySkill['5'] = parsed.classic;
-    }
-
-    // Backward compatibility: older versions stored random history as a flat array.
-    if (Array.isArray(parsed?.randomPosition) && parsed.randomPosition.length && !Object.keys(randomByPhase).length) {
-      randomByPhase.random = parsed.randomPosition;
-    }
-
-    return {
-      classicBySkill,
-      randomByPhase,
-      puzzleByTheme
-    };
-  } catch {
-    return { classicBySkill: {}, randomByPhase: {}, puzzleByTheme: {} };
-  }
-}
-
-function formatHistoryTimestamp(timestamp) {
-  try {
-    return new Date(timestamp).toLocaleString();
-  } catch {
-    return '';
-  }
-}
-
-function getPhaseConfig(phase) {
-  switch (phase) {
-    case 'opening':
-      return { plyMin: 4, plyMax: 14, minPieces: 22, maxPieces: 32, captureBias: 0.15 };
-    case 'middlegame':
-      return { plyMin: 12, plyMax: 44, minPieces: 12, maxPieces: 26, captureBias: 0.5 };
-    case 'endgame':
-      return { plyMin: 18, plyMax: 140, minPieces: 4, maxPieces: 12, captureBias: 0.9 };
-    case 'random':
-    default:
-      return { plyMin: 8, plyMax: 36, minPieces: 8, maxPieces: 32, captureBias: 0.4 };
-  }
-}
-
-function pickBiasedRandomMove(board, legalMoves, phaseConfig) {
-  const captures = legalMoves.filter((move) => move.captured);
-  const promotions = legalMoves.filter((move) => move.promotion);
-  const checks = legalMoves.filter((move) => {
-    const test = new Chess(board.fen());
-    test.move(move);
-    return test.inCheck() && !test.isGameOver();
-  });
-
-  const roll = Math.random();
-  if (captures.length && roll < phaseConfig.captureBias) {
-    return captures[randomInt(0, captures.length - 1)];
-  }
-
-  if (promotions.length && roll < 0.97) {
-    return promotions[randomInt(0, promotions.length - 1)];
-  }
-
-  if (checks.length && roll < 0.55) {
-    return checks[randomInt(0, checks.length - 1)];
-  }
-
-  return legalMoves[randomInt(0, legalMoves.length - 1)];
-}
-
-async function generateRandomTrainingBoard({ playerColor, minLegalMoves, phase }) {
-  const maxAttempts = phase === 'endgame' ? 220 : 140;
-  const phaseConfig = getPhaseConfig(phase);
-
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    if (attempt > 0 && attempt % 12 === 0) {
-      await yieldToMainThread();
-    }
-
-    const board = new Chess();
-    let failed = false;
-    let reachedCandidate = false;
-
-    for (let ply = 0; ply < phaseConfig.plyMax; ply += 1) {
-      const legalMoves = board.moves({ verbose: true });
-      if (!legalMoves.length) {
-        failed = true;
-        break;
-      }
-
-      const move = pickBiasedRandomMove(board, legalMoves, phaseConfig);
-      board.move(move);
-
-      if (board.isGameOver()) {
-        failed = true;
-        break;
-      }
-
-      if (ply + 1 >= phaseConfig.plyMin) {
-        const pieceCount = countPiecesFromFen(board);
-        if (pieceCount >= phaseConfig.minPieces && pieceCount <= phaseConfig.maxPieces) {
-          reachedCandidate = true;
-          if (phase !== 'endgame' || pieceCount <= phaseConfig.maxPieces) {
-            break;
-          }
-        }
-      }
-    }
-
-    if (failed || !reachedCandidate) {
-      continue;
-    }
-
-    if (board.turn() !== playerColor) {
-      const legalMoves = board.moves({ verbose: true });
-      if (!legalMoves.length) {
-        continue;
-      }
-      board.move(legalMoves[randomInt(0, legalMoves.length - 1)]);
-    }
-
-    if (board.turn() !== playerColor || board.isGameOver()) {
-      continue;
-    }
-
-    const finalMoves = board.moves();
-    if (finalMoves.length < minLegalMoves) {
-      continue;
-    }
-
-    const pieceCount = countPiecesFromFen(board);
-    if (pieceCount < phaseConfig.minPieces || pieceCount > phaseConfig.maxPieces) {
-      continue;
-    }
-
-    if (phase === 'endgame' && finalMoves.length < Math.max(3, minLegalMoves)) {
-      continue;
-    }
-
-    return board;
-  }
-
-  const fallback = new Chess();
-  if (fallback.turn() !== playerColor) {
-    const legalMoves = fallback.moves({ verbose: true });
-    if (legalMoves.length) {
-      fallback.move(legalMoves[randomInt(0, legalMoves.length - 1)]);
-    }
-  }
-  return fallback;
-}
-
-function getGameResultMessage(board) {
-  if (!board.isGameOver()) {
-    return '';
-  }
-
-  if (board.isCheckmate()) {
-    const winner = board.turn() === 'w' ? 'Black' : 'White';
-    return `Checkmate. ${winner} wins.`;
-  }
-
-  if (board.isStalemate()) {
-    return 'Draw by stalemate.';
-  }
-
-  if (board.isInsufficientMaterial()) {
-    return 'Draw by insufficient material.';
-  }
-
-  if (board.isThreefoldRepetition()) {
-    return 'Draw by threefold repetition.';
-  }
-
-  return 'Draw.';
-}
-
-const START_FEN = new Chess().fen();
-const DRAG_START_SLOP_PX = 20;
-const PUZZLE_REPLY_DELAY_MS = 220;
-const VALID_MOVE_DOT = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' shape-rendering='geometricPrecision'%3E%3Ccircle cx='50' cy='50' r='22' fill='%23228B22' fill-opacity='0.97'/%3E%3C/svg%3E")`;
-const PIECE_TYPE_LABEL = { p: 'P', n: 'N', b: 'B', r: 'R', q: 'Q', k: 'K' };
-const PIECE_SYMBOLS = {
-  wK: '♔',
-  wQ: '♕',
-  wR: '♖',
-  wB: '♗',
-  wN: '♘',
-  wP: '♙',
-  bK: '♚',
-  bQ: '♛',
-  bR: '♜',
-  bB: '♝',
-  bN: '♞',
-  bP: '♟'
-};
-const UNICODE_PIECE_STYLES = {
-  unicode1: {
-    label: 'Unicode 1',
-    fontFamily: '"CT Unicode DejaVu Sans", sans-serif',
-    fontScale: 1,
-    lineHeight: 1,
-    yOffset: 0,
-    glyphYOffsetEm: 0
-  },
-  unicode6: {
-    label: 'Unicode 2',
-    fontFamily: '"CT Unicode Noto Symbols 2", sans-serif',
-    fontScale: 0.92,
-    lineHeight: 1,
-    yOffset: 0,
-    glyphYOffsetEm: 0
-  },
-  unicode7: {
-    label: 'Unicode 3',
-    fontFamily: '"CT Unicode Quivira", serif',
-    fontScale: 1.02,
-    lineHeight: 1,
-    yOffset: 0,
-    glyphYOffsetEm: 0
-  }
-};
-const BOARD_THEMES = {
-  classic: {
-    label: 'Classic',
-    light: '#F0D9B5',
-    dark: '#B58863',
-    board: { borderRadius: '10px', boxShadow: '0 10px 24px rgba(18, 34, 54, 0.24)' }
-  },
-  crimson: {
-    label: 'Crimson',
-    light: '#F7E0E0',
-    dark: '#A94452',
-    board: { borderRadius: '10px', boxShadow: '0 10px 24px rgba(72, 23, 30, 0.24)' }
-  },
-  amber: {
-    label: 'Amber',
-    light: '#F7EBC9',
-    dark: '#C48A2C',
-    board: { borderRadius: '10px', boxShadow: '0 10px 24px rgba(88, 58, 16, 0.24)' }
-  },
-  green: {
-    label: 'Green',
-    light: '#EEEED2',
-    dark: '#769656',
-    board: { borderRadius: '10px', boxShadow: '0 10px 24px rgba(24, 44, 25, 0.24)' }
-  },
-  teal: {
-    label: 'Teal',
-    light: '#DAF1EE',
-    dark: '#2C8C82',
-    board: { borderRadius: '10px', boxShadow: '0 10px 24px rgba(18, 58, 53, 0.24)' }
-  },
-  blue: {
-    label: 'Blue',
-    light: '#DEEAF7',
-    dark: '#5E81AC',
-    board: { borderRadius: '10px', boxShadow: '0 10px 24px rgba(18, 38, 74, 0.24)' }
-  },
-  indigo: {
-    label: 'Indigo',
-    light: '#E5E8FA',
-    dark: '#4F5FA8',
-    board: { borderRadius: '10px', boxShadow: '0 10px 24px rgba(26, 32, 72, 0.25)' }
-  },
-  violet: {
-    label: 'Violet',
-    light: '#EFE6FA',
-    dark: '#7C5BA7',
-    board: { borderRadius: '10px', boxShadow: '0 10px 24px rgba(46, 29, 72, 0.24)' }
-  },
-  walnut: {
-    label: 'Walnut',
-    light: '#E8D2B0',
-    dark: '#8C5A3C',
-    board: { borderRadius: '10px', boxShadow: '0 12px 24px rgba(57, 31, 19, 0.28)' }
-  },
-  tournament: {
-    label: 'Tournament',
-    light: '#F4E6C8',
-    dark: '#9E6B3F',
-    board: { borderRadius: '10px', boxShadow: '0 12px 24px rgba(45, 28, 18, 0.28)' }
-  },
-  olive: {
-    label: 'Olive',
-    light: '#EEEED2',
-    dark: '#6B8E23',
-    board: { borderRadius: '8px', boxShadow: '0 8px 20px rgba(36, 54, 24, 0.22)' }
-  },
-  slate: {
-    label: 'Slate',
-    light: '#D9E1EF',
-    dark: '#60728D',
-    board: { borderRadius: '10px', boxShadow: '0 10px 24px rgba(10, 19, 34, 0.28)' }
-  },
-  gray: {
-    label: 'Gray',
-    light: '#E7EAF0',
-    dark: '#7B8798',
-    board: { borderRadius: '10px', boxShadow: '0 10px 24px rgba(32, 38, 49, 0.22)' }
-  },
-  tournament3d: {
-    label: 'Tournament 3D',
-    light: '#F6E7C8',
-    dark: '#B37B4B',
-    board: {
-      borderRadius: '12px',
-      boxShadow: '0 18px 28px rgba(20, 24, 31, 0.36), inset 0 2px 0 rgba(255, 255, 255, 0.38)',
-      background: 'linear-gradient(145deg, rgba(255,255,255,0.38), rgba(0,0,0,0.18))'
-    }
-  }
-};
-
-function extractSquareFromDragArgs(...args) {
-  for (const arg of args) {
-    if (typeof arg === 'string' && /^[a-h][1-8]$/.test(arg)) {
-      return arg;
-    }
-
-    if (arg && typeof arg === 'object') {
-      const candidates = [arg.sourceSquare, arg.square, arg.from, arg.source];
-      for (const candidate of candidates) {
-        if (typeof candidate === 'string' && /^[a-h][1-8]$/.test(candidate)) {
-          return candidate;
-        }
-      }
-    }
-  }
-
-  return '';
-}
-
-function normalizeArrowTuples(arrows) {
-  const source = Array.isArray(arrows) ? arrows : [];
-  return source
-    .map((arrow) => {
-      if (Array.isArray(arrow)) {
-        const [from, to, color] = arrow;
-        if (typeof from === 'string' && typeof to === 'string') {
-          return [from, to, color || 'rgb(64, 132, 255)'];
-        }
-        return null;
-      }
-
-      if (arrow && typeof arrow === 'object') {
-        const from = arrow.startSquare;
-        const to = arrow.endSquare;
-        const color = arrow.color;
-        if (typeof from === 'string' && typeof to === 'string') {
-          return [from, to, color || 'rgb(64, 132, 255)'];
-        }
-      }
-
-      return null;
-    })
-    .filter(Boolean);
-}
+import {
+  DRAG_START_SLOP_PX,
+  PIECE_TYPE_LABEL,
+  PUZZLE_REPLY_DELAY_MS,
+  START_FEN,
+  VALID_MOVE_DOT,
+  approximateEloForSkillLevel,
+  bestMoveSanFromHistory,
+  clamp,
+  extractSquareFromDragArgs,
+  formatElapsedSeconds,
+  formatMoveMetaDisplay,
+  formatPuzzleThemeLabel,
+  formatScoreValue,
+  formatTimedPointsSuffix,
+  generateRandomTrainingBoard,
+  getGameResultMessage,
+  getTimeScoreFactor,
+  moveSanFromFen,
+  normalizeArrowTuples,
+  penaltyForMiss,
+  pointsForRank,
+  randomInt,
+  rankLabel,
+  replayBoardFromMoves,
+  toMoveString
+} from './lib/chessCore';
+import { BOARD_THEMES, PIECE_SYMBOLS, UNICODE_PIECE_STYLES, createCustomPieces } from './lib/pieceThemes';
 
 export default function App() {
   const [game, setGame] = useState(() => new Chess());
@@ -573,7 +62,6 @@ export default function App() {
   const [lastEvaluatedMoves, setLastEvaluatedMoves] = useState([]);
   const [showLastEvaluated, setShowLastEvaluated] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [boardWidth, setBoardWidth] = useState(720);
   const [selectedSquare, setSelectedSquare] = useState('');
   const [dragSourceSquare, setDragSourceSquare] = useState('');
   const [playerMoveMeta, setPlayerMoveMeta] = useState([]);
@@ -600,7 +88,6 @@ export default function App() {
   const [puzzleHintUnlocked, setPuzzleHintUnlocked] = useState(false);
   const [showPuzzleHint, setShowPuzzleHint] = useState(false);
   const [currentSessionSaved, setCurrentSessionSaved] = useState(false);
-  const [scoreHistory, setScoreHistory] = useState(() => loadScoreHistory());
   const [showScoreHistory, setShowScoreHistory] = useState(false);
   const [pendingPromotion, setPendingPromotion] = useState(null);
   const [collapsedPanels, setCollapsedPanels] = useState({
@@ -616,6 +103,7 @@ export default function App() {
   const invalidFlashTimeoutsRef = useRef([]);
   const previousMoveHistoryLenRef = useRef(0);
   const currentPuzzlePendingScoreRef = useRef(0);
+  const boardWidth = useResponsiveBoardSize(boardWrapRef, boardStatusRef);
 
   const { ready, error, configure, beginNewGame, evaluateTopMoves, chooseMoveFast } = useStockfish();
 
@@ -631,40 +119,6 @@ export default function App() {
     // configure is intentionally omitted to prevent reconfiguration on each render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, engineSkillLevel]);
-
-  useEffect(() => {
-    const container = boardWrapRef.current;
-    if (!container) {
-      return;
-    }
-
-    const updateBoardSize = () => {
-      const rect = container.getBoundingClientRect();
-      const statusHeight = boardStatusRef.current?.getBoundingClientRect().height ?? 0;
-      const isPortraitMobile = window.matchMedia('(max-width: 1024px) and (orientation: portrait)').matches;
-      const maxFromWidth = Math.max(280, rect.width);
-
-      let maxFromHeight;
-      if (isPortraitMobile) {
-        const reservedForSections = Math.max(180, Math.floor(window.innerHeight * 0.28));
-        maxFromHeight = Math.max(260, window.innerHeight - statusHeight - reservedForSections - 12);
-      } else {
-        maxFromHeight = Math.max(260, rect.height - 4);
-      }
-
-      setBoardWidth(Math.floor(Math.min(maxFromWidth, maxFromHeight)));
-    };
-
-    updateBoardSize();
-    const observer = new ResizeObserver(updateBoardSize);
-    observer.observe(container);
-    window.addEventListener('resize', updateBoardSize);
-
-    return () => {
-      observer.disconnect();
-      window.removeEventListener('resize', updateBoardSize);
-    };
-  }, []);
 
   const clampedViewedPly = useMemo(() => clamp(viewedPly, 0, moveHistory.length), [viewedPly, moveHistory.length]);
   const viewingHistory = isGameStarted && clampedViewedPly < moveHistory.length;
@@ -684,11 +138,28 @@ export default function App() {
   const randomFenMode = gameMode === 'random-fen';
   const puzzleMode = gameMode === 'puzzle';
   const freeplayMode = gameMode === 'freeplay';
-  const scoreModeKey = useTimeScoring ? 'timed' : 'standard';
-  const scoreModeLabel = useTimeScoring ? 'Timed' : 'Standard';
-  const classicHistoryKey = historyBucketKey(String(engineSkillLevel), scoreModeKey);
-  const randomHistoryKey = historyBucketKey(String(randomFenPhase), scoreModeKey);
-  const puzzleHistoryKey = historyBucketKey(String(puzzleTheme), scoreModeKey);
+  const {
+    setScoreHistory,
+    scoreModeKey,
+    scoreModeLabel,
+    classicHistoryKey,
+    randomHistoryKey,
+    puzzleHistoryKey,
+    classicHistoryForSelectedSkill,
+    randomHistoryForSelectedPhase,
+    puzzleHistoryForSelectedTheme,
+    bestClassicScore,
+    bestRandomSession,
+    bestPuzzleSession,
+    activeScoreHistory,
+    displayedScoreHistory
+  } = useScoreHistory({
+    gameMode,
+    engineSkillLevel,
+    randomFenPhase,
+    puzzleTheme,
+    useTimeScoring
+  });
   const effectiveGameOver = game.isGameOver() || Boolean(resultOverrideMessage);
   const timedScoringTurnActive = useMemo(
     () => (
@@ -777,102 +248,8 @@ export default function App() {
         : '36px minmax(0, 1fr) minmax(0, 1fr)';
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(SCORE_HISTORY_STORAGE_KEY, JSON.stringify(scoreHistory));
-    } catch {
-      // Ignore storage errors (private mode, quota, etc.)
-    }
-  }, [scoreHistory]);
-
-  useEffect(() => {
     currentPuzzlePendingScoreRef.current = currentPuzzlePendingScore;
   }, [currentPuzzlePendingScore]);
-
-  const classicHistoryForSelectedSkill = useMemo(
-    () => {
-      const buckets = scoreHistory.classicBySkill || {};
-      if (scoreModeKey === 'standard') {
-        return buckets[classicHistoryKey] ?? buckets[String(engineSkillLevel)] ?? [];
-      }
-      return buckets[classicHistoryKey] ?? [];
-    },
-    [scoreHistory, engineSkillLevel, scoreModeKey, classicHistoryKey]
-  );
-
-  const randomHistoryForSelectedPhase = useMemo(
-    () => {
-      const buckets = scoreHistory.randomByPhase || {};
-      if (scoreModeKey === 'standard') {
-        return buckets[randomHistoryKey] ?? buckets[String(randomFenPhase)] ?? [];
-      }
-      return buckets[randomHistoryKey] ?? [];
-    },
-    [scoreHistory, randomFenPhase, scoreModeKey, randomHistoryKey]
-  );
-
-  const puzzleHistoryForSelectedTheme = useMemo(
-    () => {
-      const buckets = scoreHistory.puzzleByTheme || {};
-      if (scoreModeKey === 'standard') {
-        return buckets[puzzleHistoryKey] ?? buckets[String(puzzleTheme)] ?? [];
-      }
-      return buckets[puzzleHistoryKey] ?? [];
-    },
-    [scoreHistory, puzzleTheme, scoreModeKey, puzzleHistoryKey]
-  );
-
-  const bestClassicScore = useMemo(() => {
-    if (!classicHistoryForSelectedSkill.length) {
-      return null;
-    }
-    return [...classicHistoryForSelectedSkill].sort((a, b) => {
-      if (b.percent !== a.percent) return b.percent - a.percent;
-      if (b.possible !== a.possible) return b.possible - a.possible;
-      return b.earned - a.earned;
-    })[0];
-  }, [classicHistoryForSelectedSkill]);
-
-  const bestRandomSession = useMemo(() => {
-    if (!randomHistoryForSelectedPhase.length) {
-      return null;
-    }
-    return [...randomHistoryForSelectedPhase].sort((a, b) => {
-      if (b.positions !== a.positions) return b.positions - a.positions;
-      if (b.percent !== a.percent) return b.percent - a.percent;
-      if (b.possible !== a.possible) return b.possible - a.possible;
-      return b.earned - a.earned;
-    })[0];
-  }, [randomHistoryForSelectedPhase]);
-
-  const bestPuzzleSession = useMemo(() => {
-    if (!puzzleHistoryForSelectedTheme.length) {
-      return null;
-    }
-    return [...puzzleHistoryForSelectedTheme].sort((a, b) => {
-      if (b.possible !== a.possible) return b.possible - a.possible;
-      if (b.percent !== a.percent) return b.percent - a.percent;
-      if (b.puzzles !== a.puzzles) return b.puzzles - a.puzzles;
-      return b.earned - a.earned;
-    })[0];
-  }, [puzzleHistoryForSelectedTheme]);
-
-  const activeScoreHistory = useMemo(
-    () => (puzzleMode
-      ? puzzleHistoryForSelectedTheme
-      : (randomFenMode ? randomHistoryForSelectedPhase : classicHistoryForSelectedSkill)),
-    [puzzleMode, puzzleHistoryForSelectedTheme, randomFenMode, randomHistoryForSelectedPhase, classicHistoryForSelectedSkill]
-  );
-
-  const displayedScoreHistory = useMemo(() => {
-    const rows = [...activeScoreHistory];
-    if (puzzleMode) {
-      return rows;
-    }
-    return rows.sort((a, b) => {
-      if (b.percent !== a.percent) return b.percent - a.percent;
-      return (b.timestamp || 0) - (a.timestamp || 0);
-    });
-  }, [activeScoreHistory, puzzleMode]);
 
   useEffect(() => {
     setShowScoreHistory(false);
@@ -1036,6 +413,33 @@ export default function App() {
     const actualTheme = currentPuzzle?.themes?.[0];
     return actualTheme ? `Random (${formatPuzzleThemeLabel(actualTheme)})` : 'Random';
   }, [puzzleMode, puzzleTheme, currentPuzzle]);
+  const activeScoreHistoryTitle = useMemo(() => {
+    if (puzzleMode) {
+      return `Puzzle History (${formatPuzzleThemeLabel(puzzleTheme)}, ${scoreModeLabel})`;
+    }
+    if (randomFenMode) {
+      return `Random History (${randomFenPhase === 'random' ? 'Random' : randomFenPhase}, ${scoreModeLabel})`;
+    }
+    return `Classic History (Level ${engineSkillLevel}, ${scoreModeLabel})`;
+  }, [puzzleMode, puzzleTheme, randomFenMode, randomFenPhase, engineSkillLevel, scoreModeLabel]);
+  const clearHistoryButtonTitle = useMemo(() => {
+    if (puzzleMode) {
+      return `Clear Puzzle History (${formatPuzzleThemeLabel(puzzleTheme)})`;
+    }
+    if (randomFenMode) {
+      return 'Clear Random History';
+    }
+    return `Clear Classic History (Level ${engineSkillLevel})`;
+  }, [puzzleMode, puzzleTheme, randomFenMode, engineSkillLevel]);
+  const clearHistoryAriaLabel = useMemo(() => {
+    if (puzzleMode) {
+      return `Clear Puzzle History for theme ${formatPuzzleThemeLabel(puzzleTheme)}`;
+    }
+    if (randomFenMode) {
+      return `Clear Random History for ${randomFenPhase === 'random' ? 'Random' : randomFenPhase} phase`;
+    }
+    return `Clear Classic History for Skill Level ${engineSkillLevel}`;
+  }, [puzzleMode, puzzleTheme, randomFenMode, randomFenPhase, engineSkillLevel]);
 
   const nextPuzzleHint = useMemo(() => {
     if (!puzzleMode || !puzzleHintUnlocked || awaitingNextPuzzle) {
@@ -1056,316 +460,7 @@ export default function App() {
     () => ({ ...chessboardTheme.board, width: `${boardWidth}px`, maxWidth: '100%' }),
     [chessboardTheme.board, boardWidth]
   );
-  const chessboardArrows = useMemo(
-    () => normalizeArrowTuples(displayArrows).map(([startSquare, endSquare, color]) => ({ startSquare, endSquare, color })),
-    [displayArrows]
-  );
-
-  const customPieces = useMemo(() => {
-    if (pieceStyle === 'default') {
-      return undefined;
-    }
-
-    const unicodeStyle = UNICODE_PIECE_STYLES[pieceStyle] || (pieceStyle === 'glyph' ? UNICODE_PIECE_STYLES.unicode1 : null);
-
-    if (unicodeStyle) {
-      const getGlyphPiece = (pieceCode) => (props) => (
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%" style={props?.svgStyle}>
-          <text
-            x="50"
-            y="50"
-            dy="0.14em"
-            textAnchor="middle"
-            dominantBaseline="middle"
-            style={{
-              fontFamily: unicodeStyle.fontFamily,
-              fontSize: `${92 * (unicodeStyle.fontScale ?? 1)}px`,
-              lineHeight: unicodeStyle.lineHeight,
-              fill: pieceCode[0] === 'w' ? '#21344f' : '#0f1829'
-            }}
-          >
-            {PIECE_SYMBOLS[pieceCode]}
-          </text>
-        </svg>
-      );
-
-      return {
-        wP: getGlyphPiece('wP'),
-        wN: getGlyphPiece('wN'),
-        wB: getGlyphPiece('wB'),
-        wR: getGlyphPiece('wR'),
-        wQ: getGlyphPiece('wQ'),
-        wK: getGlyphPiece('wK'),
-        bP: getGlyphPiece('bP'),
-        bN: getGlyphPiece('bN'),
-        bB: getGlyphPiece('bB'),
-        bR: getGlyphPiece('bR'),
-        bQ: getGlyphPiece('bQ'),
-        bK: getGlyphPiece('bK')
-      };
-    }
-
-    if (pieceStyle === 'sprite26774') {
-      const getSpritePiece = (pieceCode) => (props) => {
-        const sizePercent = 94;
-        const isWhite = pieceCode[0] === 'w';
-        const src = isWhite
-          ? `/pieces/line-art/${pieceCode}.png?v=14`
-          : `/pieces/line-art/${pieceCode}.svg?v=14`;
-
-        return (
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%" style={props?.svgStyle}>
-            <image
-              href={src}
-              x={`${(100 - sizePercent) / 2}`}
-              y={`${(100 - sizePercent) / 2}`}
-              width={`${sizePercent}`}
-              height={`${sizePercent}`}
-              preserveAspectRatio="xMidYMid meet"
-            />
-          </svg>
-        );
-      };
-
-      return {
-        wP: getSpritePiece('wP'),
-        wN: getSpritePiece('wN'),
-        wB: getSpritePiece('wB'),
-        wR: getSpritePiece('wR'),
-        wQ: getSpritePiece('wQ'),
-        wK: getSpritePiece('wK'),
-        bP: getSpritePiece('bP'),
-        bN: getSpritePiece('bN'),
-        bB: getSpritePiece('bB'),
-        bR: getSpritePiece('bR'),
-        bQ: getSpritePiece('bQ'),
-        bK: getSpritePiece('bK')
-      };
-    }
-
-    if (pieceStyle === 'spriteChessPieces') {
-      const getSpritePiece = (pieceCode) => (props) => {
-        const sizePercent = 94;
-        const src = `/pieces/illustrated/${pieceCode}.png?v=4`;
-
-        return (
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%" style={props?.svgStyle}>
-            <image
-              href={src}
-              x={`${(100 - sizePercent) / 2}`}
-              y={`${(100 - sizePercent) / 2}`}
-              width={`${sizePercent}`}
-              height={`${sizePercent}`}
-              preserveAspectRatio="xMidYMid meet"
-            />
-          </svg>
-        );
-      };
-
-      return {
-        wP: getSpritePiece('wP'),
-        wN: getSpritePiece('wN'),
-        wB: getSpritePiece('wB'),
-        wR: getSpritePiece('wR'),
-        wQ: getSpritePiece('wQ'),
-        wK: getSpritePiece('wK'),
-        bP: getSpritePiece('bP'),
-        bN: getSpritePiece('bN'),
-        bB: getSpritePiece('bB'),
-        bR: getSpritePiece('bR'),
-        bQ: getSpritePiece('bQ'),
-        bK: getSpritePiece('bK')
-      };
-    }
-
-    if (pieceStyle === 'sprite3413429') {
-      const getSpritePiece = (pieceCode) => (props) => {
-        const isPawn = pieceCode[1] === 'P';
-        const sizePercent = isPawn ? 82 : 94;
-        const isWhite = pieceCode[0] === 'w';
-        const src = isWhite
-          ? `/pieces/regal/${pieceCode}.png?v=2`
-          : `/pieces/regal/${pieceCode}.svg?v=2`;
-
-        return (
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%" style={props?.svgStyle}>
-            <image
-              href={src}
-              x={`${(100 - sizePercent) / 2}`}
-              y={`${(100 - sizePercent) / 2}`}
-              width={`${sizePercent}`}
-              height={`${sizePercent}`}
-              preserveAspectRatio="xMidYMid meet"
-            />
-          </svg>
-        );
-      };
-
-      return {
-        wP: getSpritePiece('wP'),
-        wN: getSpritePiece('wN'),
-        wB: getSpritePiece('wB'),
-        wR: getSpritePiece('wR'),
-        wQ: getSpritePiece('wQ'),
-        wK: getSpritePiece('wK'),
-        bP: getSpritePiece('bP'),
-        bN: getSpritePiece('bN'),
-        bB: getSpritePiece('bB'),
-        bR: getSpritePiece('bR'),
-        bQ: getSpritePiece('bQ'),
-        bK: getSpritePiece('bK')
-      };
-    }
-
-    if (pieceStyle === 'spriteChrisdesign') {
-      const getSpritePiece = (pieceCode) => (props) => {
-        const isPawn = pieceCode[1] === 'P';
-        const sizePercent = isPawn ? 84 : 96;
-        const src = `/pieces/modern/${pieceCode}.png?v=4`;
-
-        return (
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%" style={props?.svgStyle}>
-            <image
-              href={src}
-              x={`${(100 - sizePercent) / 2}`}
-              y={`${(100 - sizePercent) / 2}`}
-              width={`${sizePercent}`}
-              height={`${sizePercent}`}
-              preserveAspectRatio="xMidYMid meet"
-            />
-          </svg>
-        );
-      };
-
-      return {
-        wP: getSpritePiece('wP'),
-        wN: getSpritePiece('wN'),
-        wB: getSpritePiece('wB'),
-        wR: getSpritePiece('wR'),
-        wQ: getSpritePiece('wQ'),
-        wK: getSpritePiece('wK'),
-        bP: getSpritePiece('bP'),
-        bN: getSpritePiece('bN'),
-        bB: getSpritePiece('bB'),
-        bR: getSpritePiece('bR'),
-        bQ: getSpritePiece('bQ'),
-        bK: getSpritePiece('bK')
-      };
-    }
-
-    if (pieceStyle === 'spriteRetro') {
-      const getSpritePiece = (pieceCode) => (props) => {
-        const pieceType = pieceCode[1];
-        const sizePercent =
-          pieceType === 'P' ? 80
-            : (pieceType === 'R' || pieceType === 'N') ? 88
-              : 94;
-        const src = `/pieces/retro/${pieceCode}.png?v=1`;
-
-        return (
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%" style={props?.svgStyle}>
-            <image
-              href={src}
-              x={`${(100 - sizePercent) / 2}`}
-              y={`${(100 - sizePercent) / 2}`}
-              width={`${sizePercent}`}
-              height={`${sizePercent}`}
-              preserveAspectRatio="xMidYMid meet"
-              style={{ imageRendering: 'pixelated' }}
-            />
-          </svg>
-        );
-      };
-
-      return {
-        wP: getSpritePiece('wP'),
-        wN: getSpritePiece('wN'),
-        wB: getSpritePiece('wB'),
-        wR: getSpritePiece('wR'),
-        wQ: getSpritePiece('wQ'),
-        wK: getSpritePiece('wK'),
-        bP: getSpritePiece('bP'),
-        bN: getSpritePiece('bN'),
-        bB: getSpritePiece('bB'),
-        bR: getSpritePiece('bR'),
-        bQ: getSpritePiece('bQ'),
-        bK: getSpritePiece('bK')
-      };
-    }
-
-    const isGlass = pieceStyle === 'glass';
-    const labels = { P: 'P', N: 'N', B: 'B', R: 'R', Q: 'Q', K: 'K' };
-    const fontSizeFactor = pieceStyle === 'glass' ? 0.44 : 0.42;
-    const borderRadius = pieceStyle === 'glass' ? '28%' : '22%';
-
-    const getPiece = (color, piece) => (props) => (
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%" style={props?.svgStyle}>
-        <rect
-          x="13"
-          y="13"
-          width="74"
-          height="74"
-          rx={borderRadius === '28%' ? 21 : 16}
-          fill={isGlass
-            ? (color === 'w' ? '#dfe9f8' : '#243450')
-            : (color === 'w' ? '#e7d8c0' : '#312826')}
-        />
-        <rect
-          x="13"
-          y="13"
-          width="74"
-          height="74"
-          rx={borderRadius === '28%' ? 21 : 16}
-          fill={isGlass
-            ? (color === 'w' ? 'rgba(255,255,255,0.36)' : 'rgba(255,255,255,0.07)')
-            : (color === 'w' ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.18)')}
-          stroke={isGlass
-            ? (color === 'w' ? 'rgba(21,36,57,0.35)' : 'rgba(235,241,255,0.2)')
-            : (color === 'w' ? 'rgba(48,39,26,0.34)' : 'rgba(245,219,182,0.2)')}
-          strokeWidth="1.5"
-        />
-        <rect
-          x="16"
-          y="16"
-          width="68"
-          height="26"
-          rx={borderRadius === '28%' ? 16 : 12}
-          fill={isGlass
-            ? (color === 'w' ? 'rgba(255,255,255,0.44)' : 'rgba(255,255,255,0.12)')
-            : (color === 'w' ? 'rgba(255,250,240,0.2)' : 'rgba(255,220,180,0.05)')}
-        />
-        {isGlass ? (
-          <ellipse cx="39" cy="31" rx="24" ry="12" fill={color === 'w' ? 'rgba(255,255,255,0.42)' : 'rgba(255,255,255,0.16)'} />
-        ) : null}
-        <text
-          x="50"
-          y="50"
-          dy="0.12em"
-          textAnchor="middle"
-          dominantBaseline="middle"
-          fill={color === 'w' ? '#1f2d44' : '#ecf2ff'}
-          style={{ fontWeight: 800, fontSize: `${82 * fontSizeFactor}px` }}
-        >
-          {labels[piece]}
-        </text>
-      </svg>
-    );
-
-    return {
-      wP: getPiece('w', 'P'),
-      wN: getPiece('w', 'N'),
-      wB: getPiece('w', 'B'),
-      wR: getPiece('w', 'R'),
-      wQ: getPiece('w', 'Q'),
-      wK: getPiece('w', 'K'),
-      bP: getPiece('b', 'P'),
-      bN: getPiece('b', 'N'),
-      bB: getPiece('b', 'B'),
-      bR: getPiece('b', 'R'),
-      bQ: getPiece('b', 'Q'),
-      bK: getPiece('b', 'K')
-    };
-  }, [pieceStyle]);
+  const customPieces = useMemo(() => createCustomPieces(pieceStyle), [pieceStyle]);
 
   const renderPromotionPreviewPiece = useCallback((pieceCode) => {
     const pieceRenderer = (customPieces || defaultPieces)?.[pieceCode];
@@ -1487,139 +582,61 @@ export default function App() {
     };
   }, []);
 
-  const resetToSetup = () => {
-    if (isGameStarted && randomFenMode && !currentSessionSaved && (score.possible > 0 || randomPositionsCompleted > 0)) {
-      const percent = score.possible ? (Math.max(0, score.earned) / score.possible) * 100 : 0;
-      setScoreHistory((prev) => ({
-        ...prev,
-        randomByPhase: {
-          ...(prev.randomByPhase || {}),
-          [randomHistoryKey]: [
-            {
-              earned: score.earned,
-              possible: score.possible,
-              percent,
-              positions: randomPositionsCompleted,
-              topN,
-              timestamp: Date.now(),
-              phase: randomFenPhase,
-              scoreMode: scoreModeKey,
-              totalMoveTimeMs: totalTimedMoveMs
-            },
-            ...((prev.randomByPhase?.[randomHistoryKey] ?? []))
-          ].slice(0, 100)
-        }
-      }));
-    }
-    if (isGameStarted && puzzleMode && !currentSessionSaved && (score.possible > 0 || puzzlesCompleted > 0)) {
-      const percent = score.possible ? (Math.max(0, score.earned) / score.possible) * 100 : 0;
-      setScoreHistory((prev) => ({
-        ...prev,
-        puzzleByTheme: {
-          ...(prev.puzzleByTheme || {}),
-          [puzzleHistoryKey]: [
-            {
-              earned: score.earned,
-              possible: score.possible,
-              percent,
-              puzzles: puzzlesCompleted,
-              timestamp: Date.now(),
-              theme: puzzleTheme,
-              scoreMode: scoreModeKey,
-              totalMoveTimeMs: totalTimedMoveMs
-            },
-            ...((prev.puzzleByTheme?.[puzzleHistoryKey] ?? []))
-          ].slice(0, 100)
-        }
-      }));
-    }
-
-    setGame(new Chess());
-    setSessionStartFen(START_FEN);
-    setIsGameStarted(false);
-    setResultOverrideMessage('');
-    setCurrentTopMoves([]);
-    setLastEvaluatedMoves([]);
-    setShowLastEvaluated(false);
-    setStatus('Configure settings, then click Start Game.');
-    setSelectedSquare('');
-    setDragSourceSquare('');
-    setIsProcessing(false);
-    setPlayerMoveMeta([]);
-    setMoveHistory([]);
-    setScore({ earned: 0, possible: 0, errors: 0 });
-    setErrorSquareStyles({});
-    setRightClickedSquares({});
-    setDrawnArrows([]);
-    setActivePlayerColor('w');
-    setManualBoardOrientation('white');
-    setAwaitingNextRandomFen(false);
-    setAwaitingNextPuzzle(false);
-    setCurrentPuzzle(null);
-    setCurrentPuzzleMoveIndex(0);
-    setCurrentPuzzlePlayerMoveCount(0);
-    setCurrentPuzzlePendingScore(0);
-    currentPuzzlePendingScoreRef.current = 0;
-    setRandomPositionsCompleted(0);
-    setPuzzlesCompleted(0);
-    setPuzzleHintUnlocked(false);
-    setShowPuzzleHint(false);
-    setCurrentSessionSaved(false);
-    setPlayerTurnStartedAt(0);
-    setTotalTimedMoveMs(0);
-    setLiveTimedTurnMs(0);
-    setPendingPromotion(null);
-  };
-
-  const finishGame = (board, scoreSnapshot = score, options = {}) => {
-    const { resultOverride = '', statusOverride = '' } = options;
-    setResultOverrideMessage(resultOverride || '');
-
-    if (freeplayMode || puzzleMode) {
-      setStatus(statusOverride || resultOverride || (board.isGameOver() ? 'Game over.' : (puzzleMode ? 'Puzzle mode ended.' : 'Freeplay ended.')));
-      setCurrentTopMoves([]);
-      setIsProcessing(false);
-      setSelectedSquare('');
-      setDragSourceSquare('');
-      setAwaitingNextRandomFen(false);
-      setAwaitingNextPuzzle(false);
-      return;
-    }
-
-    const percentValue = scoreSnapshot.possible
-      ? (Math.max(0, scoreSnapshot.earned) / scoreSnapshot.possible) * 100
-      : 0;
-    const percent = percentValue.toFixed(1);
-    setStatus(statusOverride || `Final score: ${formatScoreValue(Math.max(0, scoreSnapshot.earned))}/${formatScoreValue(scoreSnapshot.possible)} (${percent}%).`);
-    setCurrentTopMoves([]);
-    setIsProcessing(false);
-    setSelectedSquare('');
-    setDragSourceSquare('');
-    setAwaitingNextRandomFen(false);
-
-    if (!randomFenMode && !currentSessionSaved && scoreSnapshot.possible > 0) {
-      setScoreHistory((prev) => ({
-        ...prev,
-        classicBySkill: {
-          ...(prev.classicBySkill || {}),
-          [classicHistoryKey]: [
-            {
-              earned: scoreSnapshot.earned,
-              possible: scoreSnapshot.possible,
-              percent: percentValue,
-              topN,
-              timestamp: Date.now(),
-              skillLevel: engineSkillLevel,
-              scoreMode: scoreModeKey,
-              totalMoveTimeMs: totalTimedMoveMs
-            },
-            ...((prev.classicBySkill?.[classicHistoryKey] ?? []))
-          ].slice(0, 100)
-        }
-      }));
-      setCurrentSessionSaved(true);
-    }
-  };
+  const { resetToSetup, finishGame } = useGameFlow({
+    isGameStarted,
+    randomFenMode,
+    puzzleMode,
+    freeplayMode,
+    currentSessionSaved,
+    score,
+    randomPositionsCompleted,
+    puzzlesCompleted,
+    randomHistoryKey,
+    randomFenPhase,
+    scoreModeKey,
+    totalTimedMoveMs,
+    puzzleHistoryKey,
+    puzzleTheme,
+    topN,
+    classicHistoryKey,
+    engineSkillLevel,
+    currentPuzzlePendingScoreRef,
+    setScoreHistory,
+    setGame,
+    setSessionStartFen,
+    setIsGameStarted,
+    setResultOverrideMessage,
+    setCurrentTopMoves,
+    setLastEvaluatedMoves,
+    setShowLastEvaluated,
+    setStatus,
+    setSelectedSquare,
+    setDragSourceSquare,
+    setIsProcessing,
+    setPlayerMoveMeta,
+    setMoveHistory,
+    setScore,
+    setErrorSquareStyles,
+    setRightClickedSquares,
+    setDrawnArrows,
+    setActivePlayerColor,
+    setManualBoardOrientation,
+    setAwaitingNextRandomFen,
+    setAwaitingNextPuzzle,
+    setCurrentPuzzle,
+    setCurrentPuzzleMoveIndex,
+    setCurrentPuzzlePlayerMoveCount,
+    setCurrentPuzzlePendingScore,
+    setRandomPositionsCompleted,
+    setPuzzlesCompleted,
+    setPuzzleHintUnlocked,
+    setShowPuzzleHint,
+    setCurrentSessionSaved,
+    setPlayerTurnStartedAt,
+    setTotalTimedMoveMs,
+    setLiveTimedTurnMs,
+    setPendingPromotion
+  });
 
   const preloadTopMoves = async (fen, nextTopN) => {
     const { topMoves } = await evaluateTopMoves({ fen, topN: nextTopN });
@@ -1995,7 +1012,7 @@ export default function App() {
     const moveUci = toMoveString(humanMove);
     const rank = (freeplayMode && !freeplayAnalyzeMoves) ? 0 : (currentTopMoves.indexOf(moveUci) + 1);
     const bestMove = bestMoveSanFromHistory(moveHistory, currentTopMoves[0]);
-    const ply = moveHistory.length + 1;
+    const ply = testGame.history().length;
     const elapsedMs = playerTurnStartedAt ? Math.max(0, Date.now() - playerTurnStartedAt) : 0;
     const timeFactor = useTimeScoring ? getTimeScoreFactor(elapsedMs) : 1;
     const timedMoveSuffix = useTimeScoring ? ` Time: ${formatElapsedSeconds(elapsedMs)}.` : '';
@@ -2550,37 +1567,7 @@ export default function App() {
     setViewedPly(moveHistory.length);
   };
 
-  const chessboardOptions = useMemo(() => ({
-    id: 'trainer-board',
-    position: displayedBoard.fen() || START_FEN,
-    boardOrientation,
-    boardStyle: boardRenderStyle,
-    lightSquareStyle,
-    darkSquareStyle,
-    dropSquareStyle,
-    squareStyles: selectedSquareStyles,
-    pieces: customPieces,
-    allowDragging: true,
-    canDragPiece: () => (
-      isGameStarted
-      && !viewingHistory
-      && !isProcessing
-      && !pendingPromotion
-      && !effectiveGameOver
-      && (freeplayMode || puzzleMode || playerTurn)
-    ),
-    dragActivationDistance: DRAG_START_SLOP_PX,
-    showAnimations: true,
-    animationDurationInMs: 250,
-    allowDrawingArrows: true,
-    arrows: chessboardArrows,
-    onArrowsChange: ({ arrows }) => handleArrowsChange(arrows),
-    onPieceDrag: ({ square }) => onPieceDragBegin({ square }),
-    onPieceDrop: ({ sourceSquare, targetSquare }) => onDrop(sourceSquare, targetSquare),
-    onSquareClick: ({ square }) => onSquareClick(square),
-    onSquareRightClick: ({ square }) => onSquareRightClick(square),
-    onSquareMouseUp: () => onPieceDragEnd()
-  }), [
+  const chessboardOptions = useChessboardOptions({
     displayedBoard,
     boardOrientation,
     boardRenderStyle,
@@ -2597,14 +1584,14 @@ export default function App() {
     puzzleMode,
     playerTurn,
     pendingPromotion,
-    chessboardArrows,
+    displayArrows,
     handleArrowsChange,
     onPieceDragBegin,
     onPieceDragEnd,
     onDrop,
     onSquareClick,
     onSquareRightClick
-  ]);
+  });
 
   return (
     <div className="app">
@@ -2734,441 +1721,111 @@ export default function App() {
       )}
 
       <div className="left-column">
-        <header className={`panel${collapsedPanels.settings ? ' is-collapsed' : ''}`}>
-          <div className="panel-head">
-            <h2 className="panel-title">Settings</h2>
-            <button
-              type="button"
-              className="panel-toggle"
-              onClick={() => togglePanel('settings')}
-              aria-expanded={!collapsedPanels.settings}
-              aria-label={collapsedPanels.settings ? 'Expand Settings' : 'Collapse Settings'}
-            >
-              {collapsedPanels.settings ? 'Show' : 'Hide'}
-            </button>
-          </div>
+        <SettingsPanel
+          collapsed={collapsedPanels.settings}
+          onToggle={() => togglePanel('settings')}
+          gameMode={gameMode}
+          settingsLocked={settingsLocked}
+          setGameMode={setGameMode}
+          randomFenMode={randomFenMode}
+          randomFenPhase={randomFenPhase}
+          setRandomFenPhase={setRandomFenPhase}
+          puzzleMode={puzzleMode}
+          puzzleTheme={puzzleTheme}
+          setPuzzleTheme={setPuzzleTheme}
+          puzzleManifest={puzzleManifest}
+          formatPuzzleThemeLabel={formatPuzzleThemeLabel}
+          engineSkillLevel={engineSkillLevel}
+          freeplayMode={freeplayMode}
+          setEngineSkillLevel={setEngineSkillLevel}
+          clamp={clamp}
+          approximateEloForSkillLevel={approximateEloForSkillLevel}
+          topN={topN}
+          setTopN={setTopN}
+          allowCommonOpenings={allowCommonOpenings}
+          setAllowCommonOpenings={setAllowCommonOpenings}
+          freeplayAnalyzeMoves={freeplayAnalyzeMoves}
+          setFreeplayAnalyzeMoves={setFreeplayAnalyzeMoves}
+          playerColor={playerColor}
+          setPlayerColor={setPlayerColor}
+          boardStyle={boardStyle}
+          setBoardStyle={setBoardStyle}
+          BOARD_THEMES={BOARD_THEMES}
+          pieceStyle={pieceStyle}
+          setPieceStyle={setPieceStyle}
+          UNICODE_PIECE_STYLES={UNICODE_PIECE_STYLES}
+          showValidMoves={showValidMoves}
+          setShowValidMoves={setShowValidMoves}
+          useTimeScoring={useTimeScoring}
+          setUseTimeScoring={setUseTimeScoring}
+          isGameStarted={isGameStarted}
+          startGame={startGame}
+          resetToSetup={resetToSetup}
+          ready={ready}
+          isProcessing={isProcessing}
+        />
 
-          {!collapsedPanels.settings ? (
-          <div className="controls">
-            <label>
-              Game Mode
-              <select value={gameMode} disabled={settingsLocked} onChange={(e) => setGameMode(e.target.value)}>
-                <option value="classic">Classic</option>
-                <option value="random-fen">Random Position</option>
-                <option value="puzzle">Puzzle</option>
-                <option value="freeplay">Freeplay</option>
-              </select>
-            </label>
+        <ScorePanel
+          collapsed={collapsedPanels.score}
+          onToggle={() => togglePanel('score')}
+          status={status}
+          freeplayMode={freeplayMode}
+          score={score}
+          scorePercent={scorePercent}
+          useTimeScoring={useTimeScoring}
+          displayedTotalTimedMs={displayedTotalTimedMs}
+          randomFenMode={randomFenMode}
+          puzzleMode={puzzleMode}
+          currentOpening={currentOpening}
+          randomPositionsCompleted={randomPositionsCompleted}
+          puzzlesCompleted={puzzlesCompleted}
+          puzzleThemeDisplay={puzzleThemeDisplay}
+          freeplayAnalyzeMoves={freeplayAnalyzeMoves}
+          topN={topN}
+          scoreModeLabel={scoreModeLabel}
+          bestClassicScore={bestClassicScore}
+          bestRandomSession={bestRandomSession}
+          bestPuzzleSession={bestPuzzleSession}
+          randomFenPhase={randomFenPhase}
+          puzzleTheme={puzzleTheme}
+          showScoreHistory={showScoreHistory}
+          onToggleScoreHistory={() => setShowScoreHistory((prev) => !prev)}
+          activeScoreHistoryTitle={activeScoreHistoryTitle}
+          clearActiveScoreHistory={clearActiveScoreHistory}
+          clearHistoryButtonTitle={clearHistoryButtonTitle}
+          clearHistoryAriaLabel={clearHistoryAriaLabel}
+          activeScoreHistory={activeScoreHistory}
+          displayedScoreHistory={displayedScoreHistory}
+          lastEvaluatedMoves={lastEvaluatedMoves}
+          showLastEvaluated={showLastEvaluated}
+          onToggleLastEvaluated={() => setShowLastEvaluated((prev) => !prev)}
+          puzzleHintUnlocked={puzzleHintUnlocked}
+          nextPuzzleHint={nextPuzzleHint}
+          showPuzzleHint={showPuzzleHint}
+          onTogglePuzzleHint={() => setShowPuzzleHint((prev) => !prev)}
+          error={error}
+        />
 
-            {randomFenMode ? (
-              <label>
-                Position Phase
-                <select
-                  value={randomFenPhase}
-                  disabled={settingsLocked}
-                  onChange={(e) => setRandomFenPhase(e.target.value)}
-                >
-                  <option value="random">Random</option>
-                  <option value="opening">Opening</option>
-                  <option value="middlegame">Middlegame</option>
-                  <option value="endgame">Endgame</option>
-                </select>
-              </label>
-            ) : puzzleMode ? (
-              <label>
-                Puzzle Theme
-                <select
-                  value={puzzleTheme}
-                  disabled={settingsLocked}
-                  onChange={(e) => setPuzzleTheme(e.target.value)}
-                >
-                  <option value="random">Random</option>
-                  {(puzzleManifest?.themes || []).map((t) => (
-                    <option key={t.slug} value={t.theme}>{`${formatPuzzleThemeLabel(t.theme)} (${t.count.toLocaleString()})`}</option>
-                  ))}
-                </select>
-              </label>
-            ) : (
-              <label>
-                Skill Level
-                <select
-                  value={engineSkillLevel}
-                  disabled={settingsLocked || freeplayMode || puzzleMode}
-                  onChange={(e) => setEngineSkillLevel(clamp(Number(e.target.value || 5), 0, 20))}
-                >
-                  {Array.from({ length: 21 }, (_, i) => (
-                    <option key={i} value={i}>
-                      {`Level ${i} (~${approximateEloForSkillLevel(i)} Elo)`}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-
-            {!puzzleMode ? (
-              <label>
-                Top N
-                <input
-                  type="number"
-                  min={1}
-                  max={10}
-                  value={topN}
-                  disabled={settingsLocked}
-                  onChange={(e) => setTopN(clamp(Number(e.target.value || 3), 1, 10))}
-                />
-              </label>
-            ) : null}
-
-            {!randomFenMode && !freeplayMode && !puzzleMode ? (
-              <label>
-                Allow Common Openings
-                <input
-                  type="checkbox"
-                  checked={allowCommonOpenings}
-                  disabled={settingsLocked}
-                  onChange={(e) => setAllowCommonOpenings(e.target.checked)}
-                />
-              </label>
-            ) : null}
-
-            {freeplayMode ? (
-              <label>
-                Analyze Moves
-                <input
-                  type="checkbox"
-                  checked={freeplayAnalyzeMoves}
-                  disabled={settingsLocked}
-                  onChange={(e) => setFreeplayAnalyzeMoves(e.target.checked)}
-                />
-              </label>
-            ) : null}
-
-            {!puzzleMode ? (
-              <label>
-                Play As
-                <select value={playerColor} disabled={settingsLocked} onChange={(e) => setPlayerColor(e.target.value)}>
-                  <option value="w">White</option>
-                  <option value="b">Black</option>
-                  <option value="random">Random</option>
-                </select>
-              </label>
-            ) : null}
-
-            <label>
-              Board Style
-              <select value={boardStyle} onChange={(e) => setBoardStyle(e.target.value)}>
-                {Object.entries(BOARD_THEMES).map(([value, theme]) => (
-                  <option value={value} key={value}>{theme.label}</option>
-                ))}
-              </select>
-            </label>
-
-            <label>
-              Piece Style
-              <select value={pieceStyle} onChange={(e) => setPieceStyle(e.target.value)}>
-                <option value="default">Default</option>
-                <option value="sprite26774">Line Art</option>
-                <option value="spriteChessPieces">Illustrated</option>
-                <option value="sprite3413429">Regal</option>
-                <option value="spriteChrisdesign">Modern</option>
-                <option value="spriteRetro">Retro</option>
-                {Object.entries(UNICODE_PIECE_STYLES).map(([value, config]) => (
-                  <option value={value} key={value}>{config.label}</option>
-                ))}
-                <option value="alpha">Alpha</option>
-                <option value="glass">Glass</option>
-              </select>
-            </label>
-
-            <label>
-              Show Valid Moves
-              <input
-                type="checkbox"
-                checked={showValidMoves}
-                onChange={(e) => setShowValidMoves(e.target.checked)}
-              />
-            </label>
-
-            {!freeplayMode ? (
-              <label>
-                Time-Based Scoring
-                <input
-                  type="checkbox"
-                  checked={useTimeScoring}
-                  disabled={settingsLocked}
-                  onChange={(e) => setUseTimeScoring(e.target.checked)}
-                />
-              </label>
-            ) : null}
-
-            {!isGameStarted ? (
-              <button className="success-button" onClick={startGame} type="button" disabled={!ready || isProcessing}>
-                Start Game
-              </button>
-            ) : (
-              <button className="danger-button" onClick={resetToSetup} type="button">End Game</button>
-            )}
-          </div>
-          ) : null}
-        </header>
-
-        <section className={`panel${collapsedPanels.score ? ' is-collapsed' : ''}`}>
-          <div className="panel-head">
-            <h2 className="panel-title">Score</h2>
-            <button
-              type="button"
-              className="panel-toggle"
-              onClick={() => togglePanel('score')}
-              aria-expanded={!collapsedPanels.score}
-              aria-label={collapsedPanels.score ? 'Expand Score' : 'Collapse Score'}
-            >
-              {collapsedPanels.score ? 'Show' : 'Hide'}
-            </button>
-          </div>
-          {!collapsedPanels.score ? (
-          <>
-          <p><strong>Update:</strong> {status}</p>
-          {!freeplayMode ? <p><strong>Current:</strong> {formatScoreValue(score.earned)} / {formatScoreValue(score.possible)} ({scorePercent}%)</p> : null}
-          {!freeplayMode ? <p><strong>Mistakes:</strong> {score.errors}</p> : null}
-          {!freeplayMode && useTimeScoring ? <p><strong>Total Time:</strong> {formatDurationMs(displayedTotalTimedMs)}</p> : null}
-          {!randomFenMode && !puzzleMode ? (
-            <p><strong>Opening:</strong> {currentOpening?.label || '-'}</p>
-          ) : null}
-          {randomFenMode ? <p><strong>Positions:</strong> {randomPositionsCompleted}</p> : null}
-          {puzzleMode ? <p><strong>Puzzles:</strong> {puzzlesCompleted}</p> : null}
-          {puzzleMode ? <p><strong>Theme:</strong> {puzzleThemeDisplay}</p> : null}
-          {freeplayMode ? <p><strong>Move Analysis:</strong> {freeplayAnalyzeMoves ? `Top ${topN} enabled` : 'Off'}</p> : null}
-          {!freeplayMode ? <p><strong>Score Mode:</strong> {scoreModeLabel}</p> : null}
-          {!randomFenMode && !freeplayMode && !puzzleMode ? (
-            bestClassicScore ? (
-              <p>
-                <strong>Best Classic:</strong>{' '}
-                {formatScoreValue(Math.max(0, bestClassicScore.earned))} / {formatScoreValue(bestClassicScore.possible)} ({bestClassicScore.percent.toFixed(1)}%)
-                {bestClassicScore.topN ? ` [Top ${bestClassicScore.topN}]` : ''}
-                {bestClassicScore.scoreMode ? ` [${bestClassicScore.scoreMode === 'timed' ? 'Timed' : 'Standard'}]` : ''}
-                {typeof bestClassicScore.totalMoveTimeMs === 'number' ? ` [Time ${formatDurationMs(bestClassicScore.totalMoveTimeMs)}]` : ''}
-              </p>
-            ) : (
-              <p><strong>Best Classic:</strong> -</p>
-            )
-          ) : randomFenMode ? (
-            bestRandomSession ? (
-              <p>
-                <strong>Best Random:</strong>{' '}
-                {bestRandomSession.positions} positions, {formatScoreValue(Math.max(0, bestRandomSession.earned))} / {formatScoreValue(bestRandomSession.possible)} ({bestRandomSession.percent.toFixed(1)}%)
-                {bestRandomSession.topN ? `, Top ${bestRandomSession.topN}` : ''}
-                {` [${randomFenPhase === 'random' ? 'Random' : randomFenPhase}]`}
-                {bestRandomSession.scoreMode ? ` [${bestRandomSession.scoreMode === 'timed' ? 'Timed' : 'Standard'}]` : ''}
-                {typeof bestRandomSession.totalMoveTimeMs === 'number' ? ` [Time ${formatDurationMs(bestRandomSession.totalMoveTimeMs)}]` : ''}
-              </p>
-            ) : (
-              <p><strong>Best Random:</strong> -</p>
-            )
-          ) : puzzleMode ? (
-            bestPuzzleSession ? (
-              <p>
-                <strong>Best Puzzle:</strong>{' '}
-                {bestPuzzleSession.puzzles} puzzles, {formatScoreValue(Math.max(0, bestPuzzleSession.earned))} / {formatScoreValue(bestPuzzleSession.possible)} ({bestPuzzleSession.percent.toFixed(1)}%)
-                {` [${formatPuzzleThemeLabel(puzzleTheme)}]`}
-                {bestPuzzleSession.scoreMode ? ` [${bestPuzzleSession.scoreMode === 'timed' ? 'Timed' : 'Standard'}]` : ''}
-                {typeof bestPuzzleSession.totalMoveTimeMs === 'number' ? ` [Time ${formatDurationMs(bestPuzzleSession.totalMoveTimeMs)}]` : ''}
-              </p>
-            ) : (
-              <p><strong>Best Puzzle:</strong> -</p>
-            )
-          ) : null}
-          {!freeplayMode ? (
-            <button
-            type="button"
-            className="secondary"
-            onClick={() => setShowScoreHistory((prev) => !prev)}
-          >
-            {showScoreHistory ? 'Hide Score History' : 'Show Score History'}
-          </button>
-          ) : null}
-          {!freeplayMode && showScoreHistory ? (
-            activeScoreHistory.length ? (
-              <div className="history-list">
-                <div className="history-list-head">
-                  <span className="history-list-title">
-                    {puzzleMode
-                      ? `Puzzle History (${formatPuzzleThemeLabel(puzzleTheme)}, ${scoreModeLabel})`
-                      : randomFenMode
-                      ? `Random History (${randomFenPhase === 'random' ? 'Random' : randomFenPhase}, ${scoreModeLabel})`
-                      : `Classic History (Level ${engineSkillLevel}, ${scoreModeLabel})`}
-                  </span>
-                  <button
-                    type="button"
-                    className="history-clear-button"
-                    onClick={clearActiveScoreHistory}
-                    title={puzzleMode ? `Clear Puzzle History (${formatPuzzleThemeLabel(puzzleTheme)})` : randomFenMode ? 'Clear Random History' : `Clear Classic History (Level ${engineSkillLevel})`}
-                    aria-label={puzzleMode
-                      ? `Clear Puzzle History for theme ${formatPuzzleThemeLabel(puzzleTheme)}`
-                      : randomFenMode
-                      ? `Clear Random History for ${randomFenPhase === 'random' ? 'Random' : randomFenPhase} phase`
-                      : `Clear Classic History for Skill Level ${engineSkillLevel}`}
-                  >
-                    🗑
-                  </button>
-                </div>
-                <div className="history-row history-columns" aria-hidden="true">
-                  <span className="history-rank">#</span>
-                  <span className="history-main">Score</span>
-                  <span className="history-time">Date</span>
-                </div>
-                {displayedScoreHistory.slice(0, 20).map((entry, index) => (
-                  <div className="history-row" key={`${entry.timestamp}-${index}`}>
-                    <span className="history-rank">#{index + 1}</span>
-                    <span className="history-main">
-                      {puzzleMode
-                        ? `${entry.puzzles} puz, ${formatScoreValue(Math.max(0, entry.earned))}/${formatScoreValue(entry.possible)} (${entry.percent.toFixed(1)}%)${typeof entry.totalMoveTimeMs === 'number' ? `, Time ${formatDurationMs(entry.totalMoveTimeMs)}` : ''}`
-                        : randomFenMode
-                        ? `${entry.positions} pos, ${formatScoreValue(Math.max(0, entry.earned))}/${formatScoreValue(entry.possible)} (${entry.percent.toFixed(1)}%)${entry.topN ? `, Top ${entry.topN}` : ''}${typeof entry.totalMoveTimeMs === 'number' ? `, Time ${formatDurationMs(entry.totalMoveTimeMs)}` : ''}`
-                        : `${formatScoreValue(Math.max(0, entry.earned))}/${formatScoreValue(entry.possible)} (${entry.percent.toFixed(1)}%)${entry.topN ? `, Top ${entry.topN}` : ''}${typeof entry.totalMoveTimeMs === 'number' ? `, Time ${formatDurationMs(entry.totalMoveTimeMs)}` : ''}`}
-                    </span>
-                    <span className="history-time">{formatHistoryTimestamp(entry.timestamp)}</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="history-list">
-                <div className="history-list-head">
-                  <span className="history-list-title">
-                    {puzzleMode
-                      ? `Puzzle History (${formatPuzzleThemeLabel(puzzleTheme)}, ${scoreModeLabel})`
-                      : randomFenMode
-                      ? `Random History (${randomFenPhase === 'random' ? 'Random' : randomFenPhase}, ${scoreModeLabel})`
-                      : `Classic History (Level ${engineSkillLevel}, ${scoreModeLabel})`}
-                  </span>
-                </div>
-                <p className="note">No score history yet.</p>
-              </div>
-            )
-          ) : null}
-
-          {lastEvaluatedMoves.length ? (
-            <>
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => setShowLastEvaluated((prev) => !prev)}
-              >
-                {showLastEvaluated ? 'Hide Last Evaluation' : 'Reveal Last Evaluation'}
-              </button>
-              {showLastEvaluated ? (
-                <p><strong>Last top choices:</strong> {lastEvaluatedMoves.join(', ')}</p>
-              ) : null}
-            </>
-          ) : null}
-
-          {puzzleMode && puzzleHintUnlocked && nextPuzzleHint ? (
-            <>
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => setShowPuzzleHint((prev) => !prev)}
-              >
-                {showPuzzleHint ? 'Hide Puzzle Hint' : 'Reveal Puzzle Hint'}
-              </button>
-              {showPuzzleHint ? (
-                <p><strong>Next puzzle move hint:</strong> {nextPuzzleHint}</p>
-              ) : null}
-            </>
-          ) : null}
-
-          {error ? <p className="error">{error}</p> : null}
-          </>
-          ) : null}
-        </section>
-
-        <section className={`panel${collapsedPanels.moves ? ' is-collapsed' : ''}`}>
-          <div className="panel-head">
-            <h2 className="panel-title">Move List</h2>
-            <button
-              type="button"
-              className="panel-toggle"
-              onClick={() => togglePanel('moves')}
-              aria-expanded={!collapsedPanels.moves}
-              aria-label={collapsedPanels.moves ? 'Expand Move List' : 'Collapse Move List'}
-            >
-              {collapsedPanels.moves ? 'Show' : 'Hide'}
-            </button>
-          </div>
-          {!collapsedPanels.moves ? (
-            <>
-              <div className="move-nav">
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={goToFirstMove}
-                  disabled={!moveHistory.length || clampedViewedPly === 0}
-                >
-                  First
-                </button>
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={goToPreviousMove}
-                  disabled={!moveHistory.length || clampedViewedPly === 0}
-                >
-                  Back
-                </button>
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={goToNextMove}
-                  disabled={!moveHistory.length || clampedViewedPly >= moveHistory.length}
-                >
-                  Forward
-                </button>
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={goToLatestMove}
-                  disabled={!moveHistory.length || clampedViewedPly >= moveHistory.length}
-                >
-                  Latest
-                </button>
-              </div>
-              <p className="move-review-note">
-                {moveHistory.length
-                  ? `Viewing ply ${clampedViewedPly}/${moveHistory.length}${viewingHistory ? ' (review mode: moves locked)' : ''}`
-                  : 'No moves yet.'}
-              </p>
-              {moveRows.length ? (
-                <div className="move-list" ref={moveListRef}>
-                  <div className="move-row move-head" style={{ gridTemplateColumns: moveRowTemplate }}>
-                    <span className="move-num">#</span>
-                    <span className={resolvedPlayerColor === 'w' ? 'player-col' : ''}>{whiteHeaderLabel}</span>
-                    {showWhiteRankColumn ? <span>Rank</span> : null}
-                    <span className={resolvedPlayerColor === 'b' ? 'player-col' : ''}>{blackHeaderLabel}</span>
-                    {showBlackRankColumn ? <span>Rank</span> : null}
-                  </div>
-                  {moveRows.map((row) => {
-                    const rowStartPly = (row.moveNumber - 1) * 2 + 1;
-                    const rowEndPly = row.black ? rowStartPly + 1 : rowStartPly;
-                    const rowIsActive = clampedViewedPly >= rowStartPly && clampedViewedPly <= rowEndPly;
-                    return (
-                    <div className={`move-row${rowIsActive ? ' move-row-active' : ''}`} key={row.moveNumber} style={{ gridTemplateColumns: moveRowTemplate }}>
-                      <span className="move-num">{row.moveNumber}.</span>
-                      <span className={resolvedPlayerColor === 'w' ? 'player-col' : ''}>
-                        {row.white ? row.white.san : '-'}
-                      </span>
-                      {showWhiteRankColumn ? <span className="move-meta">{formatMoveMetaDisplay(row.whiteMeta)}</span> : null}
-                      <span className={resolvedPlayerColor === 'b' ? 'player-col' : ''}>
-                        {row.black ? row.black.san : '-'}
-                      </span>
-                      {showBlackRankColumn ? <span className="move-meta">{formatMoveMetaDisplay(row.blackMeta)}</span> : null}
-                    </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                null
-              )}
-            </>
-          ) : null}
-        </section>
+        <MoveListPanel
+          collapsed={collapsedPanels.moves}
+          onToggle={() => togglePanel('moves')}
+          moveHistory={moveHistory}
+          clampedViewedPly={clampedViewedPly}
+          viewingHistory={viewingHistory}
+          goToFirstMove={goToFirstMove}
+          goToPreviousMove={goToPreviousMove}
+          goToNextMove={goToNextMove}
+          goToLatestMove={goToLatestMove}
+          moveRows={moveRows}
+          moveListRef={moveListRef}
+          moveRowTemplate={moveRowTemplate}
+          resolvedPlayerColor={resolvedPlayerColor}
+          whiteHeaderLabel={whiteHeaderLabel}
+          blackHeaderLabel={blackHeaderLabel}
+          showWhiteRankColumn={showWhiteRankColumn}
+          showBlackRankColumn={showBlackRankColumn}
+          formatMoveMetaDisplay={formatMoveMetaDisplay}
+        />
       </div>
     </div>
   );
