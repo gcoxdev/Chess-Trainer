@@ -202,11 +202,74 @@ select:disabled {
 }
 
 .board-area {
+  position: relative;
   width: 100%;
   min-height: 0;
   display: grid;
   justify-items: center;
   align-items: start;
+}
+
+.promotion-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(9, 17, 30, 0.42);
+  border-radius: 12px;
+  z-index: 12;
+}
+
+.promotion-card {
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid #b9cadf;
+  border-radius: 10px;
+  padding: 0.75rem;
+  box-shadow: 0 10px 22px rgba(15, 25, 42, 0.28);
+  min-width: 220px;
+}
+
+.promotion-title {
+  font-weight: 700;
+  color: #1a3557;
+  margin-bottom: 0.5rem;
+  text-align: center;
+}
+
+.promotion-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+.promotion-button {
+  display: grid;
+  place-items: center;
+  padding: 0.35rem 0.25rem;
+  background: #eef4fd;
+  color: #1a3557;
+  border-color: #b4c6de;
+  min-height: 58px;
+}
+
+.promotion-button:hover:not(:disabled) {
+  background: #ffffff;
+  border-color: #8faace;
+}
+
+.promotion-glyph {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.promotion-glyph > * {
+  width: 100%;
+  height: 100%;
 }
 
 .capture-bar {

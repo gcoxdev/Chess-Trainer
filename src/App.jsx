@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Chess } from 'chess.js';
-import { Chessboard } from 'react-chessboard';
-import { TouchBackend } from 'react-dnd-touch-backend';
+import { Chessboard, defaultPieces } from 'react-chessboard';
 import { useStockfish } from './hooks/useStockfish';
 import { COMMON_OPENING_MAX_PLY, findCurrentOpening, findMatchingCommonOpening } from './data/commonOpenings';
 
@@ -345,15 +344,6 @@ async function generateRandomTrainingBoard({ playerColor, minLegalMoves, phase }
   return fallback;
 }
 
-function getPromotionChoiceFromBoardPiece(pieceCode) {
-  if (!pieceCode || typeof pieceCode !== 'string' || pieceCode.length < 2) {
-    return undefined;
-  }
-
-  const piece = pieceCode[1]?.toLowerCase();
-  return ['q', 'r', 'b', 'n'].includes(piece) ? piece : undefined;
-}
-
 function getGameResultMessage(board) {
   if (!board.isGameOver()) {
     return '';
@@ -403,25 +393,25 @@ const UNICODE_PIECE_STYLES = {
     label: 'Unicode 1',
     fontFamily: '"CT Unicode DejaVu Sans", sans-serif',
     fontScale: 1,
-    lineHeight: 0.88,
+    lineHeight: 1,
     yOffset: 0,
-    glyphYOffsetEm: 0.03
+    glyphYOffsetEm: 0
   },
   unicode6: {
     label: 'Unicode 2',
     fontFamily: '"CT Unicode Noto Symbols 2", sans-serif',
-    fontScale: 0.9,
-    lineHeight: 0.9,
+    fontScale: 0.92,
+    lineHeight: 1,
     yOffset: 0,
-    glyphYOffsetEm: 0.18
+    glyphYOffsetEm: 0
   },
   unicode7: {
     label: 'Unicode 3',
     fontFamily: '"CT Unicode Quivira", serif',
-    fontScale: 1.08,
-    lineHeight: 0.94,
+    fontScale: 1.02,
+    lineHeight: 1,
     yOffset: 0,
-    glyphYOffsetEm: 0.02
+    glyphYOffsetEm: 0
   }
 };
 const BOARD_THEMES = {
@@ -534,6 +524,32 @@ function extractSquareFromDragArgs(...args) {
   return '';
 }
 
+function normalizeArrowTuples(arrows) {
+  const source = Array.isArray(arrows) ? arrows : [];
+  return source
+    .map((arrow) => {
+      if (Array.isArray(arrow)) {
+        const [from, to, color] = arrow;
+        if (typeof from === 'string' && typeof to === 'string') {
+          return [from, to, color || 'rgb(64, 132, 255)'];
+        }
+        return null;
+      }
+
+      if (arrow && typeof arrow === 'object') {
+        const from = arrow.startSquare;
+        const to = arrow.endSquare;
+        const color = arrow.color;
+        if (typeof from === 'string' && typeof to === 'string') {
+          return [from, to, color || 'rgb(64, 132, 255)'];
+        }
+      }
+
+      return null;
+    })
+    .filter(Boolean);
+}
+
 export default function App() {
   const [game, setGame] = useState(() => new Chess());
   const [engineSkillLevel, setEngineSkillLevel] = useState(5);
@@ -586,6 +602,7 @@ export default function App() {
   const [currentSessionSaved, setCurrentSessionSaved] = useState(false);
   const [scoreHistory, setScoreHistory] = useState(() => loadScoreHistory());
   const [showScoreHistory, setShowScoreHistory] = useState(false);
+  const [pendingPromotion, setPendingPromotion] = useState(null);
   const [collapsedPanels, setCollapsedPanels] = useState({
     settings: false,
     score: false,
@@ -940,7 +957,7 @@ export default function App() {
   }, []);
 
   const handleArrowsChange = useCallback((nextArrows) => {
-    const normalized = Array.isArray(nextArrows) ? nextArrows : [];
+    const normalized = normalizeArrowTuples(nextArrows);
     setDrawnArrows((prev) => (areArrowsEqual(prev, normalized) ? prev : normalized));
   }, [areArrowsEqual]);
 
@@ -1030,14 +1047,13 @@ export default function App() {
   const lightSquareStyle = useMemo(() => ({ backgroundColor: chessboardTheme.light }), [chessboardTheme.light]);
   const darkSquareStyle = useMemo(() => ({ backgroundColor: chessboardTheme.dark }), [chessboardTheme.dark]);
   const dropSquareStyle = useMemo(() => ({ boxShadow: 'inset 0 0 0 6px rgba(255, 255, 255, 0.78)' }), []);
-  const dndBackendOptions = useMemo(
-    () => ({
-      enableMouseEvents: true,
-      touchSlop: DRAG_START_SLOP_PX,
-      delayMouseStart: 0,
-      delayTouchStart: 0
-    }),
-    []
+  const boardRenderStyle = useMemo(
+    () => ({ ...chessboardTheme.board, width: `${boardWidth}px`, maxWidth: '100%' }),
+    [chessboardTheme.board, boardWidth]
+  );
+  const chessboardArrows = useMemo(
+    () => normalizeArrowTuples(displayArrows).map(([startSquare, endSquare, color]) => ({ startSquare, endSquare, color })),
+    [displayArrows]
   );
 
   const customPieces = useMemo(() => {
@@ -1048,38 +1064,24 @@ export default function App() {
     const unicodeStyle = UNICODE_PIECE_STYLES[pieceStyle] || (pieceStyle === 'glyph' ? UNICODE_PIECE_STYLES.unicode1 : null);
 
     if (unicodeStyle) {
-      const getGlyphPiece = (pieceCode) => ({ squareWidth, isDragging }) => (
-        <div
-          style={{
-            width: '100%',
-            height: '100%',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            textAlign: 'center',
-            fontSize: `${squareWidth * (unicodeStyle.fontScale ?? 1)}px`,
-            lineHeight: unicodeStyle.lineHeight,
-            fontFamily: unicodeStyle.fontFamily,
-            color: pieceCode[0] === 'w' ? '#21344f' : '#0f1829',
-            textShadow: pieceCode[0] === 'w'
-              ? '0 1px 0 rgba(255,255,255,0.7)'
-              : '0 1px 0 rgba(255,255,255,0.24)',
-            transform: isDragging
-              ? `translateY(${unicodeStyle.yOffset ?? 0}px) scale(1.03)`
-              : `translateY(${unicodeStyle.yOffset ?? 0}px)`,
-            transition: 'transform 120ms ease-out'
-          }}
-        >
-          <span
+      const getGlyphPiece = (pieceCode) => (props) => (
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%" style={props?.svgStyle}>
+          <text
+            x="50"
+            y="50"
+            dy="0.14em"
+            textAnchor="middle"
+            dominantBaseline="middle"
             style={{
-              display: 'block',
-              lineHeight: 1,
-              transform: `translateY(${unicodeStyle.glyphYOffsetEm ?? 0}em)`
+              fontFamily: unicodeStyle.fontFamily,
+              fontSize: `${92 * (unicodeStyle.fontScale ?? 1)}px`,
+              lineHeight: unicodeStyle.lineHeight,
+              fill: pieceCode[0] === 'w' ? '#21344f' : '#0f1829'
             }}
           >
             {PIECE_SYMBOLS[pieceCode]}
-          </span>
-        </div>
+          </text>
+        </svg>
       );
 
       return {
@@ -1099,48 +1101,24 @@ export default function App() {
     }
 
     if (pieceStyle === 'sprite26774') {
-      const getSpritePiece = (pieceCode) => ({ squareWidth, isDragging }) => {
-        const size = `${Math.max(24, squareWidth * 1.04)}px`;
+      const getSpritePiece = (pieceCode) => (props) => {
+        const sizePercent = 94;
         const isWhite = pieceCode[0] === 'w';
         const src = isWhite
           ? `/pieces/line-art/${pieceCode}.png?v=14`
           : `/pieces/line-art/${pieceCode}.svg?v=14`;
 
         return (
-          <div
-            style={{
-              width: '100%',
-              height: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              overflow: 'visible'
-            }}
-          >
-            <div
-              style={{
-                width: size,
-                height: size,
-                transformOrigin: 'center center',
-                transform: isDragging ? 'scale(1.05)' : 'scale(1)',
-                transition: 'transform 120ms ease-out'
-              }}
-            >
-              <img
-                src={src}
-                alt=""
-                draggable={false}
-                aria-hidden="true"
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'contain',
-                  objectPosition: 'center center',
-                  display: 'block'
-                }}
-              />
-            </div>
-          </div>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%" style={props?.svgStyle}>
+            <image
+              href={src}
+              x={`${(100 - sizePercent) / 2}`}
+              y={`${(100 - sizePercent) / 2}`}
+              width={`${sizePercent}`}
+              height={`${sizePercent}`}
+              preserveAspectRatio="xMidYMid meet"
+            />
+          </svg>
         );
       };
 
@@ -1161,45 +1139,21 @@ export default function App() {
     }
 
     if (pieceStyle === 'spriteChessPieces') {
-      const getSpritePiece = (pieceCode) => ({ squareWidth, isDragging }) => {
-        const size = `${Math.max(24, squareWidth * 1.02)}px`;
+      const getSpritePiece = (pieceCode) => (props) => {
+        const sizePercent = 94;
         const src = `/pieces/illustrated/${pieceCode}.png?v=4`;
 
         return (
-          <div
-            style={{
-              width: '100%',
-              height: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              overflow: 'visible'
-            }}
-          >
-            <div
-              style={{
-                width: size,
-                height: size,
-                transformOrigin: 'center center',
-                transform: isDragging ? 'scale(1.05)' : 'scale(1)',
-                transition: 'transform 120ms ease-out'
-              }}
-            >
-              <img
-                src={src}
-                alt=""
-                draggable={false}
-                aria-hidden="true"
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'contain',
-                  objectPosition: 'center center',
-                  display: 'block'
-                }}
-              />
-            </div>
-          </div>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%" style={props?.svgStyle}>
+            <image
+              href={src}
+              x={`${(100 - sizePercent) / 2}`}
+              y={`${(100 - sizePercent) / 2}`}
+              width={`${sizePercent}`}
+              height={`${sizePercent}`}
+              preserveAspectRatio="xMidYMid meet"
+            />
+          </svg>
         );
       };
 
@@ -1220,50 +1174,25 @@ export default function App() {
     }
 
     if (pieceStyle === 'sprite3413429') {
-      const getSpritePiece = (pieceCode) => ({ squareWidth, isDragging }) => {
+      const getSpritePiece = (pieceCode) => (props) => {
         const isPawn = pieceCode[1] === 'P';
-        const sizeFactor = isPawn ? 0.88 : 1.02;
-        const size = `${Math.max(24, squareWidth * sizeFactor)}px`;
+        const sizePercent = isPawn ? 82 : 94;
         const isWhite = pieceCode[0] === 'w';
         const src = isWhite
           ? `/pieces/regal/${pieceCode}.png?v=2`
           : `/pieces/regal/${pieceCode}.svg?v=2`;
 
         return (
-          <div
-            style={{
-              width: '100%',
-              height: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              overflow: 'visible'
-            }}
-          >
-            <div
-              style={{
-                width: size,
-                height: size,
-                transformOrigin: 'center center',
-                transform: isDragging ? 'scale(1.05)' : 'scale(1)',
-                transition: 'transform 120ms ease-out'
-              }}
-            >
-              <img
-                src={src}
-                alt=""
-                draggable={false}
-                aria-hidden="true"
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'contain',
-                  objectPosition: 'center center',
-                  display: 'block'
-                }}
-              />
-            </div>
-          </div>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%" style={props?.svgStyle}>
+            <image
+              href={src}
+              x={`${(100 - sizePercent) / 2}`}
+              y={`${(100 - sizePercent) / 2}`}
+              width={`${sizePercent}`}
+              height={`${sizePercent}`}
+              preserveAspectRatio="xMidYMid meet"
+            />
+          </svg>
         );
       };
 
@@ -1284,47 +1213,22 @@ export default function App() {
     }
 
     if (pieceStyle === 'spriteChrisdesign') {
-      const getSpritePiece = (pieceCode) => ({ squareWidth, isDragging }) => {
+      const getSpritePiece = (pieceCode) => (props) => {
         const isPawn = pieceCode[1] === 'P';
-        const sizeFactor = isPawn ? 0.9 : 1.04;
-        const size = `${Math.max(24, squareWidth * sizeFactor)}px`;
+        const sizePercent = isPawn ? 84 : 96;
         const src = `/pieces/modern/${pieceCode}.png?v=4`;
 
         return (
-          <div
-            style={{
-              width: '100%',
-              height: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              overflow: 'visible'
-            }}
-          >
-            <div
-              style={{
-                width: size,
-                height: size,
-                transformOrigin: 'center center',
-                transform: isDragging ? 'scale(1.05)' : 'scale(1)',
-                transition: 'transform 120ms ease-out'
-              }}
-            >
-              <img
-                src={src}
-                alt=""
-                draggable={false}
-                aria-hidden="true"
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'contain',
-                  objectPosition: 'center center',
-                  display: 'block'
-                }}
-              />
-            </div>
-          </div>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%" style={props?.svgStyle}>
+            <image
+              href={src}
+              x={`${(100 - sizePercent) / 2}`}
+              y={`${(100 - sizePercent) / 2}`}
+              width={`${sizePercent}`}
+              height={`${sizePercent}`}
+              preserveAspectRatio="xMidYMid meet"
+            />
+          </svg>
         );
       };
 
@@ -1345,51 +1249,26 @@ export default function App() {
     }
 
     if (pieceStyle === 'spriteRetro') {
-      const getSpritePiece = (pieceCode) => ({ squareWidth, isDragging }) => {
+      const getSpritePiece = (pieceCode) => (props) => {
         const pieceType = pieceCode[1];
-        const scaleFactor =
-          pieceType === 'P' ? 0.84
-            : (pieceType === 'R' || pieceType === 'N') ? 0.92
-              : 1.02;
-        const size = `${Math.max(24, squareWidth * scaleFactor)}px`;
+        const sizePercent =
+          pieceType === 'P' ? 80
+            : (pieceType === 'R' || pieceType === 'N') ? 88
+              : 94;
         const src = `/pieces/retro/${pieceCode}.png?v=1`;
 
         return (
-          <div
-            style={{
-              width: '100%',
-              height: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              overflow: 'visible'
-            }}
-          >
-            <div
-              style={{
-                width: size,
-                height: size,
-                transformOrigin: 'center center',
-                transform: isDragging ? 'scale(1.05)' : 'scale(1)',
-                transition: 'transform 120ms ease-out'
-              }}
-            >
-              <img
-                src={src}
-                alt=""
-                draggable={false}
-                aria-hidden="true"
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'contain',
-                  objectPosition: 'center center',
-                  display: 'block',
-                  imageRendering: 'pixelated'
-                }}
-              />
-            </div>
-          </div>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%" style={props?.svgStyle}>
+            <image
+              href={src}
+              x={`${(100 - sizePercent) / 2}`}
+              y={`${(100 - sizePercent) / 2}`}
+              width={`${sizePercent}`}
+              height={`${sizePercent}`}
+              preserveAspectRatio="xMidYMid meet"
+              style={{ imageRendering: 'pixelated' }}
+            />
+          </svg>
         );
       };
 
@@ -1409,58 +1288,57 @@ export default function App() {
       };
     }
 
+    const isGlass = pieceStyle === 'glass';
     const labels = { P: 'P', N: 'N', B: 'B', R: 'R', Q: 'Q', K: 'K' };
     const fontSizeFactor = pieceStyle === 'glass' ? 0.44 : 0.42;
     const borderRadius = pieceStyle === 'glass' ? '28%' : '22%';
-    const whiteBackground = pieceStyle === 'glass'
-      ? 'linear-gradient(140deg, #ffffff 12%, #eef4ff 52%, #d6e1f6 100%)'
-      : 'linear-gradient(140deg, #fffdf7 10%, #efe7d7 55%, #d7c7ad 100%)';
-    const blackBackground = pieceStyle === 'glass'
-      ? 'linear-gradient(140deg, #5a6b89 10%, #27344f 55%, #161f32 100%)'
-      : 'linear-gradient(140deg, #5e5450 8%, #2f2a29 58%, #1a1717 100%)';
 
-    const getPiece = (color, piece) => ({ squareWidth, isDragging }) => (
-      <div
-        style={{
-          width: '100%',
-          height: '100%',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center'
-        }}
-      >
-        <div
-          style={{
-            width: `${Math.max(18, squareWidth * 0.74)}px`,
-            height: `${Math.max(18, squareWidth * 0.74)}px`,
-            borderRadius,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            textAlign: 'center',
-            color: color === 'w' ? '#1f2d44' : '#ecf2ff',
-            background: color === 'w' ? whiteBackground : blackBackground,
-            border: color === 'w' ? '1px solid rgba(21, 36, 57, 0.22)' : '1px solid rgba(235, 241, 255, 0.15)',
-            boxShadow: isDragging
-              ? '0 8px 16px rgba(0, 0, 0, 0.32)'
-              : '0 2px 7px rgba(7, 15, 27, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.35)',
-            transform: isDragging ? 'scale(1.04)' : 'scale(1)',
-            transition: 'transform 120ms ease-out'
-          }}
+    const getPiece = (color, piece) => (props) => (
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%" style={props?.svgStyle}>
+        <defs>
+          <linearGradient id={`ct-piece-bg-${pieceStyle}-${color}-${piece}`} x1="0" y1="0" x2="1" y2="1">
+            {isGlass ? (
+              <>
+                <stop offset="0%" stopColor={color === 'w' ? '#ffffff' : '#5a6b89'} />
+                <stop offset="55%" stopColor={color === 'w' ? '#eef4ff' : '#27344f'} />
+                <stop offset="100%" stopColor={color === 'w' ? '#d6e1f6' : '#161f32'} />
+              </>
+            ) : (
+              <>
+                <stop offset="0%" stopColor={color === 'w' ? '#fffdf7' : '#5e5450'} />
+                <stop offset="55%" stopColor={color === 'w' ? '#efe7d7' : '#2f2a29'} />
+                <stop offset="100%" stopColor={color === 'w' ? '#d7c7ad' : '#1a1717'} />
+              </>
+            )}
+          </linearGradient>
+        </defs>
+        <rect
+          x="13"
+          y="13"
+          width="74"
+          height="74"
+          rx={borderRadius === '28%' ? 21 : 16}
+          fill={`url(#ct-piece-bg-${pieceStyle}-${color}-${piece})`}
+          stroke={isGlass
+            ? (color === 'w' ? 'rgba(21,36,57,0.35)' : 'rgba(235,241,255,0.2)')
+            : (color === 'w' ? 'rgba(48,39,26,0.34)' : 'rgba(245,219,182,0.2)')}
+          strokeWidth="1.5"
+        />
+        {isGlass ? (
+          <ellipse cx="39" cy="31" rx="24" ry="12" fill={color === 'w' ? 'rgba(255,255,255,0.42)' : 'rgba(255,255,255,0.16)'} />
+        ) : null}
+        <text
+          x="50"
+          y="50"
+          dy="0.12em"
+          textAnchor="middle"
+          dominantBaseline="middle"
+          fill={color === 'w' ? '#1f2d44' : '#ecf2ff'}
+          style={{ fontWeight: 800, fontSize: `${82 * fontSizeFactor}px` }}
         >
-          <span
-            style={{
-              display: 'block',
-              fontWeight: 800,
-              fontSize: `${Math.max(10, squareWidth * fontSizeFactor)}px`,
-              lineHeight: 1,
-              transform: 'translateY(0.08em)'
-            }}
-          >
-            {labels[piece]}
-          </span>
-        </div>
-      </div>
+          {labels[piece]}
+        </text>
+      </svg>
     );
 
     return {
@@ -1478,6 +1356,19 @@ export default function App() {
       bK: getPiece('b', 'K')
     };
   }, [pieceStyle]);
+
+  const renderPromotionPreviewPiece = useCallback((pieceCode) => {
+    const pieceRenderer = (customPieces || defaultPieces)?.[pieceCode];
+    if (!pieceRenderer) {
+      return PIECE_SYMBOLS[pieceCode] || '';
+    }
+
+    try {
+      return pieceRenderer({ square: 'e4', svgStyle: { width: '100%', height: '100%' } });
+    } catch {
+      return pieceRenderer();
+    }
+  }, [customPieces]);
 
   const renderCapturedPiece = (pieceCode, key) => {
     const unicodeStyle = UNICODE_PIECE_STYLES[pieceStyle] || (pieceStyle === 'glyph' ? UNICODE_PIECE_STYLES.unicode1 : null);
@@ -1666,6 +1557,7 @@ export default function App() {
     setPlayerTurnStartedAt(0);
     setTotalTimedMoveMs(0);
     setLiveTimedTurnMs(0);
+    setPendingPromotion(null);
   };
 
   const finishGame = (board, scoreSnapshot = score, options = {}) => {
@@ -2068,12 +1960,13 @@ export default function App() {
     const movingPiece = testGame.get(sourceSquare);
     let promotion = forcedPromotion;
 
-    if (
+    const isPromotionMove = Boolean(
       movingPiece?.type === 'p' &&
       ((movingPiece.color === 'w' && targetSquare.endsWith('8')) ||
         (movingPiece.color === 'b' && targetSquare.endsWith('1')))
-    ) {
-      promotion = forcedPromotion;
+    );
+    if (isPromotionMove) {
+      promotion = ['q', 'r', 'b', 'n'].includes(forcedPromotion) ? forcedPromotion : 'q';
     }
 
     let humanMove;
@@ -2398,13 +2291,69 @@ export default function App() {
     return true;
   };
 
-  const onDrop = (sourceSquare, targetSquare, piece) => {
+  const getPromotionContextForMove = useCallback((sourceSquare, targetSquare) => {
+    if (!sourceSquare || !targetSquare) {
+      return null;
+    }
+
+    const needsHistoryAwareBoard = !randomFenMode && !puzzleMode;
+    const testGame = needsHistoryAwareBoard
+      ? (replayBoardFromMoves(moveHistory) || new Chess(game.fen()))
+      : new Chess(game.fen());
+    const movingPiece = testGame.get(sourceSquare);
+
+    if (!movingPiece || movingPiece.type !== 'p') {
+      return null;
+    }
+
+    const reachesLastRank =
+      (movingPiece.color === 'w' && targetSquare.endsWith('8'))
+      || (movingPiece.color === 'b' && targetSquare.endsWith('1'));
+    if (!reachesLastRank) {
+      return null;
+    }
+
+    return {
+      sourceSquare,
+      targetSquare,
+      color: movingPiece.color
+    };
+  }, [randomFenMode, puzzleMode, moveHistory, game]);
+
+  const openPromotionChooser = useCallback((sourceSquare, targetSquare) => {
+    const context = getPromotionContextForMove(sourceSquare, targetSquare);
+    if (!context) {
+      return false;
+    }
+
+    setPendingPromotion(context);
+    setSelectedSquare('');
     setDragSourceSquare('');
-    return tryPlayerMove(sourceSquare, targetSquare, getPromotionChoiceFromBoardPiece(piece));
+    return true;
+  }, [getPromotionContextForMove]);
+
+  const resolvePromotionChoice = (promotionPiece) => {
+    if (!pendingPromotion) {
+      return;
+    }
+
+    const { sourceSquare, targetSquare } = pendingPromotion;
+    setPendingPromotion(null);
+    void tryPlayerMove(sourceSquare, targetSquare, promotionPiece);
   };
 
-  const onPromotionPieceSelect = (piece) => {
-    return !!piece;
+  const onDrop = (sourceSquare, targetSquare, piece) => {
+    if (!sourceSquare || !targetSquare) {
+      setDragSourceSquare('');
+      return false;
+    }
+
+    if (openPromotionChooser(sourceSquare, targetSquare)) {
+      return false;
+    }
+
+    setDragSourceSquare('');
+    return tryPlayerMove(sourceSquare, targetSquare);
   };
 
   const resignGame = () => {
@@ -2487,6 +2436,10 @@ export default function App() {
   };
 
   const onSquareClick = (square) => {
+    if (pendingPromotion) {
+      return;
+    }
+
     if (randomFenMode && awaitingNextRandomFen) {
       setStatus('Click Next Position to continue.');
       return;
@@ -2528,13 +2481,7 @@ export default function App() {
       return;
     }
 
-    const selectedPiece = displayedBoard.get(selectedSquare);
-    if (
-      selectedPiece?.type === 'p' &&
-      ((selectedPiece.color === 'w' && square.endsWith('8')) ||
-        (selectedPiece.color === 'b' && square.endsWith('1')))
-    ) {
-      setStatus('Use drag/drop for pawn promotion to choose a piece.');
+    if (openPromotionChooser(selectedSquare, square)) {
       return;
     }
 
@@ -2585,6 +2532,62 @@ export default function App() {
     setViewedPly(moveHistory.length);
   };
 
+  const chessboardOptions = useMemo(() => ({
+    id: 'trainer-board',
+    position: displayedBoard.fen() || START_FEN,
+    boardOrientation,
+    boardStyle: boardRenderStyle,
+    lightSquareStyle,
+    darkSquareStyle,
+    dropSquareStyle,
+    squareStyles: selectedSquareStyles,
+    pieces: customPieces,
+    allowDragging: true,
+    canDragPiece: () => (
+      isGameStarted
+      && !viewingHistory
+      && !isProcessing
+      && !pendingPromotion
+      && !effectiveGameOver
+      && (freeplayMode || puzzleMode || playerTurn)
+    ),
+    dragActivationDistance: DRAG_START_SLOP_PX,
+    showAnimations: true,
+    animationDurationInMs: 250,
+    allowDrawingArrows: true,
+    arrows: chessboardArrows,
+    onArrowsChange: ({ arrows }) => handleArrowsChange(arrows),
+    onPieceDrag: ({ square }) => onPieceDragBegin({ square }),
+    onPieceDrop: ({ piece, sourceSquare, targetSquare }) => onDrop(sourceSquare, targetSquare, piece?.pieceType),
+    onSquareClick: ({ square }) => onSquareClick(square),
+    onSquareRightClick: ({ square }) => onSquareRightClick(square),
+    onSquareMouseUp: () => onPieceDragEnd()
+  }), [
+    displayedBoard,
+    boardOrientation,
+    boardRenderStyle,
+    lightSquareStyle,
+    darkSquareStyle,
+    dropSquareStyle,
+    selectedSquareStyles,
+    customPieces,
+    isGameStarted,
+    viewingHistory,
+    isProcessing,
+    effectiveGameOver,
+    freeplayMode,
+    puzzleMode,
+    playerTurn,
+    pendingPromotion,
+    chessboardArrows,
+    handleArrowsChange,
+    onPieceDragBegin,
+    onPieceDragEnd,
+    onDrop,
+    onSquareClick,
+    onSquareRightClick
+  ]);
+
   return (
     <div className="app">
       <div className="board-status" ref={boardStatusRef}>
@@ -2633,31 +2636,29 @@ export default function App() {
 
       <main className="board-wrap" ref={boardWrapRef}>
         <div className="board-area" onContextMenu={(e) => e.preventDefault()}>
-          <Chessboard
-            id="trainer-board"
-            position={displayedBoard.fen() || START_FEN}
-            dragActivationDistance={DRAG_START_SLOP_PX}
-            customDndBackend={TouchBackend}
-            customDndBackendOptions={dndBackendOptions}
-            onPieceDragBegin={onPieceDragBegin}
-            onPieceDragEnd={onPieceDragEnd}
-            onPieceDrop={onDrop}
-            onPromotionPieceSelect={onPromotionPieceSelect}
-            onSquareClick={onSquareClick}
-            onSquareRightClick={onSquareRightClick}
-            onArrowsChange={handleArrowsChange}
-            customArrows={displayArrows}
-            customSquareStyles={selectedSquareStyles}
-            customLightSquareStyle={lightSquareStyle}
-            customDarkSquareStyle={darkSquareStyle}
-            customBoardStyle={chessboardTheme.board}
-            customDropSquareStyle={dropSquareStyle}
-            customPieces={customPieces}
-            boardWidth={boardWidth}
-            boardOrientation={boardOrientation}
-            animationDuration={250}
-            arePiecesDraggable={isGameStarted && !viewingHistory && !isProcessing && !effectiveGameOver && (freeplayMode || puzzleMode || playerTurn)}
-          />
+          <Chessboard options={chessboardOptions} />
+          {pendingPromotion ? (
+            <div className="promotion-overlay" role="dialog" aria-label="Choose promotion piece">
+              <div className="promotion-card">
+                <div className="promotion-title">Choose Promotion Piece</div>
+                <div className="promotion-actions">
+                  {['q', 'r', 'b', 'n'].map((pieceType) => {
+                    const pieceCode = `${pendingPromotion.color}${pieceType.toUpperCase()}`;
+                    return (
+                      <button
+                        type="button"
+                        key={pieceType}
+                        className="promotion-button"
+                        onClick={() => resolvePromotionChoice(pieceType)}
+                      >
+                        <span className="promotion-glyph">{renderPromotionPreviewPiece(pieceCode)}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       </main>
 

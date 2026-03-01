@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -53,6 +53,16 @@ if (!source) {
 const publicDir = path.join(root, 'public');
 const sourceDir = path.dirname(source);
 mkdirSync(publicDir, { recursive: true });
+
+// Remove previously copied stockfish runtime files so stale versions do not accumulate.
+const staleRuntimeFiles = readdirSync(publicDir, { withFileTypes: true })
+  .filter((entry) => entry.isFile() && /^stockfish.*\.(js|wasm)$/i.test(entry.name))
+  .map((entry) => path.join(publicDir, entry.name));
+
+for (const filePath of staleRuntimeFiles) {
+  unlinkSync(filePath);
+}
+
 copyFileSync(source, path.join(publicDir, 'stockfish.js'));
 
 const runtimeFiles = readdirSync(sourceDir, { withFileTypes: true })
@@ -64,6 +74,17 @@ for (const filename of runtimeFiles) {
   const from = path.join(sourceDir, filename);
   const to = path.join(publicDir, filename);
   copyFileSync(from, to);
+}
+
+// Many stockfish bundles still look for "stockfish.wasm" at runtime.
+// Provide a stable alias that points to the wasm paired with the chosen engine JS.
+const sourceBase = path.basename(source, '.js');
+const preferredWasm = `${sourceBase}.wasm`;
+const wasmAliasTarget = runtimeFiles.find((name) => name === preferredWasm)
+  || runtimeFiles.find((name) => /^stockfish.*\.wasm$/i.test(name));
+
+if (wasmAliasTarget) {
+  copyFileSync(path.join(sourceDir, wasmAliasTarget), path.join(publicDir, 'stockfish.wasm'));
 }
 
 console.log(`[setup-engine] Copied main engine from ${path.relative(root, source)} to public/stockfish.js`);
