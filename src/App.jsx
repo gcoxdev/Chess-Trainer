@@ -288,22 +288,33 @@ export default function App() {
   }, [playerMoveMeta]);
 
   const replayBestMoveArrow = useMemo(() => {
-    if (!viewingHistory || clampedViewedPly < 1) {
+    if (!viewingHistory) {
       return null;
     }
 
-    const meta = playerMetaByPly.get(clampedViewedPly);
-    const bestMoveUci = String(meta?.bestMoveUci || '');
-    if (!bestMoveUci || !/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(bestMoveUci)) {
-      return null;
+    // Show the missed-best-move arrow when reviewing the move itself and
+    // also one ply before it, so the hint is visible before the move is played.
+    const candidatePlys = [clampedViewedPly, clampedViewedPly + 1];
+    for (const ply of candidatePlys) {
+      if (ply < 1 || ply > moveHistory.length) {
+        continue;
+      }
+
+      const meta = playerMetaByPly.get(ply);
+      const bestMoveUci = String(meta?.bestMoveUci || '');
+      if (!bestMoveUci || !/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(bestMoveUci)) {
+        continue;
+      }
+
+      const playedMove = moveHistory[ply - 1];
+      if (!playedMove || toMoveString(playedMove) === bestMoveUci) {
+        continue;
+      }
+
+      return [bestMoveUci.slice(0, 2), bestMoveUci.slice(2, 4), 'rgb(255,170,0)'];
     }
 
-    const playedMove = moveHistory[clampedViewedPly - 1];
-    if (!playedMove || toMoveString(playedMove) === bestMoveUci) {
-      return null;
-    }
-
-    return [bestMoveUci.slice(0, 2), bestMoveUci.slice(2, 4), 'rgb(255,170,0)'];
+    return null;
   }, [viewingHistory, clampedViewedPly, playerMetaByPly, moveHistory]);
 
   const displayArrows = useMemo(() => {
