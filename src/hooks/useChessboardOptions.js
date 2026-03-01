@@ -1,5 +1,11 @@
 import { useMemo } from 'react';
 import { DRAG_START_SLOP_PX, START_FEN, normalizeArrowTuples } from '../lib/chessCore';
+import {
+  adaptArrowsPayload,
+  adaptDropPayload,
+  adaptPieceDragPayload,
+  adaptSquarePayload
+} from '../lib/chessboardEventAdapters';
 
 export function useChessboardOptions({
   displayedBoard,
@@ -55,11 +61,14 @@ export function useChessboardOptions({
     animationDurationInMs: 250,
     allowDrawingArrows: true,
     arrows: chessboardArrows,
-    onArrowsChange: ({ arrows }) => handleArrowsChange(arrows),
-    onPieceDrag: ({ square }) => onPieceDragBegin({ square }),
-    onPieceDrop: ({ sourceSquare, targetSquare }) => onDrop(sourceSquare, targetSquare),
-    onSquareClick: ({ square }) => onSquareClick(square),
-    onSquareRightClick: ({ square }) => onSquareRightClick(square),
+    onArrowsChange: (payload) => handleArrowsChange(adaptArrowsPayload(payload)),
+    onPieceDrag: (payload) => onPieceDragBegin(adaptPieceDragPayload(payload)),
+    onPieceDrop: (...args) => {
+      const { sourceSquare, targetSquare } = adaptDropPayload(...args);
+      return onDrop(sourceSquare, targetSquare);
+    },
+    onSquareClick: (payload) => onSquareClick(adaptSquarePayload(payload)),
+    onSquareRightClick: (payload) => onSquareRightClick(adaptSquarePayload(payload)),
     onSquareMouseUp: () => onPieceDragEnd()
   }), [
     displayedBoard,

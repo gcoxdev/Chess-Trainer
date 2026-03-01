@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 function parseMultiPV(lines, expected) {
   const byIndex = new Map();
@@ -83,23 +83,23 @@ export function useStockfish() {
     };
   }, []);
 
-  const send = (command) => {
+  const send = useCallback((command) => {
     workerRef.current?.postMessage(command);
-  };
+  }, []);
 
-  const configure = ({ skillLevel }) => {
+  const configure = useCallback(({ skillLevel }) => {
     send('setoption name UCI_LimitStrength value false');
     send(`setoption name Skill Level value ${skillLevel}`);
     send('isready');
-  };
+  }, [send]);
 
-  const beginNewGame = () => {
+  const beginNewGame = useCallback(() => {
     send('stop');
     send('ucinewgame');
     send('isready');
-  };
+  }, [send]);
 
-  const evaluateTopMoves = ({ fen, topN, depth }) => {
+  const evaluateTopMoves = useCallback(({ fen, topN, depth }) => {
     if (!ready) {
       return Promise.reject(new Error('Engine not ready'));
     }
@@ -139,9 +139,9 @@ export function useStockfish() {
       send(`setoption name MultiPV value ${topN}`);
       send(`go depth ${Math.max(4, Math.min(24, depth ?? Math.min(18, 8 + topN)))}`);
     });
-  };
+  }, [ready, send]);
 
-  const chooseMoveFast = ({ fen, moveTimeMs = 220 }) => {
+  const chooseMoveFast = useCallback(({ fen, moveTimeMs = 220 }) => {
     if (!ready) {
       return Promise.reject(new Error('Engine not ready'));
     }
@@ -181,7 +181,7 @@ export function useStockfish() {
       send('setoption name MultiPV value 1');
       send(`go movetime ${Math.max(30, Math.floor(moveTimeMs))}`);
     });
-  };
+  }, [ready, send]);
 
   return { ready, error, configure, beginNewGame, evaluateTopMoves, chooseMoveFast };
 }

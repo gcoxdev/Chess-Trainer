@@ -142,8 +142,12 @@ export function bestMoveSanFromHistory(historyMoves, bestMoveUci) {
     to: bestMoveUci.slice(2, 4),
     promotion: bestMoveUci[4]
   };
-  const applied = board.move(parsed);
-  return applied?.san || bestMoveUci;
+  try {
+    const applied = board.move(parsed);
+    return applied?.san || bestMoveUci;
+  } catch {
+    return bestMoveUci;
+  }
 }
 
 export function moveSanFromFen(fen, moveUci) {

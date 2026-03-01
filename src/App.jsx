@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Chess } from 'chess.js';
 import { Chessboard, defaultPieces } from 'react-chessboard';
 import { MoveListPanel } from './components/MoveListPanel';
 import { ScorePanel } from './components/ScorePanel';
 import { SettingsPanel } from './components/SettingsPanel';
 import { useChessboardOptions } from './hooks/useChessboardOptions';
+import { useBoardHighlights } from './hooks/useBoardHighlights';
 import { useGameFlow } from './hooks/useGameFlow';
+import { useHistoryControls } from './hooks/useHistoryControls';
 import { useStockfish } from './hooks/useStockfish';
 import { useResponsiveBoardSize } from './hooks/useResponsiveBoardSize';
 import { useScoreHistory } from './hooks/useScoreHistory';
@@ -15,7 +17,6 @@ import {
   PIECE_TYPE_LABEL,
   PUZZLE_REPLY_DELAY_MS,
   START_FEN,
-  VALID_MOVE_DOT,
   approximateEloForSkillLevel,
   bestMoveSanFromHistory,
   clamp,
@@ -119,10 +120,19 @@ export default function App() {
   const boardStatusRef = useRef(null);
   const moveListRef = useRef(null);
   const puzzlePoolCacheRef = useRef(new Map());
-  const invalidFlashTimeoutsRef = useRef([]);
   const previousMoveHistoryLenRef = useRef(0);
   const currentPuzzlePendingScoreRef = useRef(0);
+  const asyncEpochRef = useRef(0);
   const boardWidth = useResponsiveBoardSize(boardWrapRef, boardStatusRef);
+
+  const nextAsyncEpoch = useCallback(() => {
+    asyncEpochRef.current += 1;
+    return asyncEpochRef.current;
+  }, []);
+
+  const isAsyncEpochCurrent = useCallback((epoch) => (
+    epoch === asyncEpochRef.current
+  ), []);
 
   const { ready, error, configure, beginNewGame, evaluateTopMoves, chooseMoveFast } = useStockfish();
 
@@ -135,9 +145,11 @@ export default function App() {
       return;
     }
     configure({ skillLevel: engineSkillLevel });
-    // configure is intentionally omitted to prevent reconfiguration on each render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, engineSkillLevel]);
+  }, [ready, engineSkillLevel, configure]);
+
+  useEffect(() => () => {
+    asyncEpochRef.current += 1;
+  }, []);
 
   useEffect(() => {
     try {
@@ -538,93 +550,17 @@ export default function App() {
     moveListRef.current.scrollTop = moveListRef.current.scrollHeight;
   }, [moveRows.length]);
 
-  useLayoutEffect(() => {
-    const previousLen = previousMoveHistoryLenRef.current;
-    setViewedPly((prev) => (prev === previousLen ? moveHistory.length : Math.min(prev, moveHistory.length)));
-    previousMoveHistoryLenRef.current = moveHistory.length;
-    setRightClickedSquares({});
-    setDrawnArrows([]);
-  }, [moveHistory.length]);
+  const { selectedSquareStyles, flashInvalidMoveSquares } = useBoardHighlights({
+    displayedBoard,
+    selectedSquare,
+    dragSourceSquare,
+    rightClickedSquares,
+    errorSquareStyles,
+    showValidMoves,
+    setErrorSquareStyles
+  });
 
-  useEffect(() => {
-    if (!viewingHistory) {
-      return;
-    }
-    setSelectedSquare('');
-    setDragSourceSquare('');
-  }, [viewingHistory]);
-
-  const selectedSquareStyles = useMemo(() => {
-    const styles = { ...rightClickedSquares, ...errorSquareStyles };
-    const sourceSquare = dragSourceSquare || selectedSquare;
-
-    if (showValidMoves && sourceSquare) {
-      const validTargets = displayedBoard.moves({ square: sourceSquare, verbose: true });
-      for (const move of validTargets) {
-        styles[move.to] = {
-          backgroundImage: VALID_MOVE_DOT,
-          backgroundRepeat: 'no-repeat',
-          backgroundPosition: 'center',
-          backgroundSize: '54% 54%',
-          boxShadow: 'inset 0 0 0 6px rgba(34,139,34,0.85)'
-        };
-      }
-    }
-
-    if (selectedSquare) {
-      styles[selectedSquare] = {
-        background: 'radial-gradient(circle, rgba(255,240,114,0.7), rgba(255,216,44,0.35))'
-      };
-    }
-    return styles;
-  }, [selectedSquare, dragSourceSquare, rightClickedSquares, errorSquareStyles, showValidMoves, displayedBoard]);
-
-  const flashInvalidMoveSquares = (sourceSquare, targetSquare) => {
-    for (const timeoutId of invalidFlashTimeoutsRef.current) {
-      clearTimeout(timeoutId);
-    }
-    invalidFlashTimeoutsRef.current = [];
-
-    const initial = {
-      transition: 'background-color 1500ms ease-out',
-      backgroundColor: 'rgba(110, 0, 0, 0.95)',
-      boxShadow: 'inset 0 0 0 6px rgba(255, 70, 70, 0.95)'
-    };
-    const faded = {
-      transition: 'background-color 1500ms ease-out',
-      backgroundColor: 'rgba(110, 0, 0, 0.28)',
-      boxShadow: 'inset 0 0 0 6px rgba(255, 70, 70, 0.95)'
-    };
-
-    setErrorSquareStyles({
-      [sourceSquare]: initial,
-      [targetSquare]: initial
-    });
-
-    const fadeTimeout = setTimeout(() => {
-      setErrorSquareStyles({
-        [sourceSquare]: faded,
-        [targetSquare]: faded
-      });
-    }, 40);
-
-    const clearTimeoutId = setTimeout(() => {
-      setErrorSquareStyles({});
-    }, 1600);
-
-    invalidFlashTimeoutsRef.current = [fadeTimeout, clearTimeoutId];
-  };
-
-  useEffect(() => {
-    return () => {
-      for (const timeoutId of invalidFlashTimeoutsRef.current) {
-        clearTimeout(timeoutId);
-      }
-      invalidFlashTimeoutsRef.current = [];
-    };
-  }, []);
-
-  const { resetToSetup, finishGame } = useGameFlow({
+  const { resetToSetup: baseResetToSetup, finishGame } = useGameFlow({
     isGameStarted,
     randomFenMode,
     puzzleMode,
@@ -680,13 +616,21 @@ export default function App() {
     setPendingPromotion
   });
 
-  const preloadTopMoves = async (fen, nextTopN) => {
+  const resetToSetup = useCallback(() => {
+    nextAsyncEpoch();
+    baseResetToSetup();
+  }, [nextAsyncEpoch, baseResetToSetup]);
+
+  const preloadTopMoves = async (fen, nextTopN, epoch = asyncEpochRef.current) => {
     const { topMoves } = await evaluateTopMoves({ fen, topN: nextTopN });
+    if (!isAsyncEpochCurrent(epoch)) {
+      return topMoves;
+    }
     setCurrentTopMoves(topMoves);
     return topMoves;
   };
 
-  const ensurePuzzleManifest = async () => {
+  const ensurePuzzleManifest = async (epoch = asyncEpochRef.current) => {
     if (puzzleManifest) {
       return puzzleManifest;
     }
@@ -695,18 +639,21 @@ export default function App() {
       throw new Error('Puzzle pack not found. Run the puzzle pack build step first.');
     }
     const manifest = await res.json();
+    if (!isAsyncEpochCurrent(epoch)) {
+      return manifest;
+    }
     setPuzzleManifest(manifest);
     return manifest;
   };
 
-  const loadPuzzlePool = async (themeKey) => {
+  const loadPuzzlePool = async (themeKey, epoch = asyncEpochRef.current) => {
     const cacheKey = themeKey || 'random';
     const cached = puzzlePoolCacheRef.current.get(cacheKey);
     if (cached) {
       return cached;
     }
 
-    const manifest = await ensurePuzzleManifest();
+    const manifest = await ensurePuzzleManifest(epoch);
     let path = manifest.randomFile;
     if (cacheKey !== 'random') {
       const match = manifest.themes?.find((t) => t.theme === cacheKey || t.slug === cacheKey);
@@ -721,12 +668,15 @@ export default function App() {
       throw new Error('Failed to load puzzle data.');
     }
     const pool = await res.json();
+    if (!isAsyncEpochCurrent(epoch)) {
+      return pool;
+    }
     puzzlePoolCacheRef.current.set(cacheKey, pool);
     return pool;
   };
 
-  const loadPuzzlePosition = async (statusMessage) => {
-    const pool = await loadPuzzlePool(puzzleTheme);
+  const loadPuzzlePosition = async (statusMessage, epoch = asyncEpochRef.current) => {
+    const pool = await loadPuzzlePool(puzzleTheme, epoch);
     if (!Array.isArray(pool) || !pool.length) {
       throw new Error('No puzzles available for the selected theme.');
     }
@@ -756,6 +706,9 @@ export default function App() {
       idx >= startIndex && ((idx - startIndex) % 2 === 0) ? count + 1 : count
     ), 0);
     const puzzleSide = board.turn();
+    if (!isAsyncEpochCurrent(epoch)) {
+      return;
+    }
 
     setCurrentPuzzle(puzzle);
     setCurrentPuzzleMoveIndex(startIndex);
@@ -783,12 +736,16 @@ export default function App() {
     setPlayerTurnStartedAt(Date.now());
   };
 
-  const loadRandomFenPosition = async (playerSide, statusMessage) => {
+  const loadRandomFenPosition = async (playerSide, statusMessage, epoch = asyncEpochRef.current) => {
     const board = await generateRandomTrainingBoard({
       playerColor: playerSide,
       minLegalMoves: Math.max(1, topN),
       phase: randomFenPhase
     });
+    const topMoves = await evaluateTopMoves({ fen: board.fen(), topN });
+    if (!isAsyncEpochCurrent(epoch)) {
+      return;
+    }
     const seedHistory = board.history({ verbose: true });
 
     setSessionStartFen(START_FEN);
@@ -800,10 +757,8 @@ export default function App() {
     setDrawnArrows([]);
     setMoveHistory(seedHistory);
     setPlayerMoveMeta([]);
-    setCurrentTopMoves([]);
+    setCurrentTopMoves(topMoves.topMoves || []);
     setAwaitingNextRandomFen(false);
-
-    await preloadTopMoves(board.fen(), topN);
     setStatus(statusMessage || 'Random position loaded.');
     setPlayerTurnStartedAt(Date.now());
   };
@@ -813,13 +768,18 @@ export default function App() {
       return;
     }
 
+    const epoch = nextAsyncEpoch();
     setIsProcessing(true);
     try {
-      await loadRandomFenPosition(activePlayerColor, 'New random position loaded.');
+      await loadRandomFenPosition(activePlayerColor, 'New random position loaded.', epoch);
     } catch (e) {
-      setStatus(e.message || 'Engine error while loading random position.');
+      if (isAsyncEpochCurrent(epoch)) {
+        setStatus(e.message || 'Engine error while loading random position.');
+      }
     } finally {
-      setIsProcessing(false);
+      if (isAsyncEpochCurrent(epoch)) {
+        setIsProcessing(false);
+      }
     }
   };
 
@@ -828,18 +788,32 @@ export default function App() {
       return;
     }
 
+    const epoch = nextAsyncEpoch();
     setIsProcessing(true);
     try {
-      await loadPuzzlePosition('New puzzle loaded.');
+      await loadPuzzlePosition('New puzzle loaded.', epoch);
     } catch (e) {
-      setStatus(e.message || 'Error loading next puzzle.');
+      if (isAsyncEpochCurrent(epoch)) {
+        setStatus(e.message || 'Error loading next puzzle.');
+      }
     } finally {
-      setIsProcessing(false);
+      if (isAsyncEpochCurrent(epoch)) {
+        setIsProcessing(false);
+      }
     }
   };
 
-  const applyEngineReply = async (boardAfterHumanMove, lastRankLabel, scoreSnapshot = score, historyAfterHumanMove = null) => {
+  const applyEngineReply = async (
+    boardAfterHumanMove,
+    lastRankLabel,
+    scoreSnapshot = score,
+    historyAfterHumanMove = null,
+    epoch = asyncEpochRef.current
+  ) => {
     const bestMove = await chooseMoveFast({ fen: boardAfterHumanMove.fen() });
+    if (!isAsyncEpochCurrent(epoch)) {
+      return;
+    }
     const liveBoard = new Chess(boardAfterHumanMove.fen());
     let engineMove = null;
 
@@ -882,7 +856,10 @@ export default function App() {
       return;
     }
 
-    await preloadTopMoves(liveBoard.fen(), topN);
+    await preloadTopMoves(liveBoard.fen(), topN, epoch);
+    if (!isAsyncEpochCurrent(epoch)) {
+      return;
+    }
     setStatus(lastRankLabel);
     setPlayerTurnStartedAt(Date.now());
     setIsProcessing(false);
@@ -894,6 +871,7 @@ export default function App() {
       return;
     }
 
+    const epoch = nextAsyncEpoch();
     beginNewGame();
 
     const chosenColor =
@@ -927,34 +905,50 @@ export default function App() {
       if (randomFenMode) {
         await loadRandomFenPosition(
           chosenColor,
-          `Random mode started as ${chosenColor === 'w' ? 'White' : 'Black'}.`
+          `Random mode started as ${chosenColor === 'w' ? 'White' : 'Black'}.`,
+          epoch
         );
-        setIsProcessing(false);
+        if (isAsyncEpochCurrent(epoch)) {
+          setIsProcessing(false);
+        }
         return;
       }
 
       if (puzzleMode) {
-        await ensurePuzzleManifest();
-        await loadPuzzlePosition('Puzzle mode started.');
-        setIsProcessing(false);
+        await ensurePuzzleManifest(epoch);
+        await loadPuzzlePosition('Puzzle mode started.', epoch);
+        if (isAsyncEpochCurrent(epoch)) {
+          setIsProcessing(false);
+        }
         return;
       }
 
       if (freeplayMode) {
         if (freeplayAnalyzeMoves) {
-          await preloadTopMoves(board.fen(), topN);
+          await preloadTopMoves(board.fen(), topN, epoch);
+          if (!isAsyncEpochCurrent(epoch)) {
+            return;
+          }
           setStatus(`Freeplay started (${chosenColor === 'w' ? 'White' : 'Black'} orientation). Analysis on.`);
         } else {
+          if (!isAsyncEpochCurrent(epoch)) {
+            return;
+          }
           setCurrentTopMoves([]);
           setStatus(`Freeplay started (${chosenColor === 'w' ? 'White' : 'Black'} orientation). Analysis off.`);
         }
         setPlayerTurnStartedAt(Date.now());
-        setIsProcessing(false);
+        if (isAsyncEpochCurrent(epoch)) {
+          setIsProcessing(false);
+        }
         return;
       }
 
       if (chosenColor === 'b') {
         const bestMove = await chooseMoveFast({ fen: board.fen() });
+        if (!isAsyncEpochCurrent(epoch)) {
+          return;
+        }
         if (bestMove && bestMove !== '(none)') {
           const openingEngineMove = board.move({
             from: bestMove.slice(0, 2),
@@ -968,14 +962,21 @@ export default function App() {
         }
       }
 
-      await preloadTopMoves(board.fen(), topN);
+      await preloadTopMoves(board.fen(), topN, epoch);
+      if (!isAsyncEpochCurrent(epoch)) {
+        return;
+      }
       setStatus(`Game started as ${chosenColor === 'w' ? 'White' : 'Black'}.`);
       setPlayerTurnStartedAt(Date.now());
     } catch (e) {
-      setStatus(e.message || 'Engine error while starting game.');
+      if (isAsyncEpochCurrent(epoch)) {
+        setStatus(e.message || 'Engine error while starting game.');
+      }
     }
 
-    setIsProcessing(false);
+    if (isAsyncEpochCurrent(epoch)) {
+      setIsProcessing(false);
+    }
   };
 
   const tryPlayerMove = (sourceSquare, targetSquare, forcedPromotion) => {
@@ -1403,66 +1404,22 @@ export default function App() {
     });
   };
 
-  const goToFirstMove = () => {
-    setViewedPly(0);
-  };
-
-  const goToPreviousMove = () => {
-    setViewedPly((prev) => Math.max(0, prev - 1));
-  };
-
-  const goToNextMove = () => {
-    setViewedPly((prev) => Math.min(moveHistory.length, prev + 1));
-  };
-
-  const goToLatestMove = () => {
-    setViewedPly(moveHistory.length);
-  };
-
-  useEffect(() => {
-    const onGlobalHistoryKeyDown = (event) => {
-      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) {
-        return;
-      }
-
-      const target = event.target;
-      if (target instanceof HTMLElement) {
-        const tagName = target.tagName;
-        const isFormControl = tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT' || tagName === 'BUTTON';
-        if (isFormControl || target.isContentEditable) {
-          return;
-        }
-      }
-
-      if (!moveHistory.length || pendingPromotion) {
-        return;
-      }
-
-      switch (event.key) {
-        case 'ArrowLeft':
-          event.preventDefault();
-          goToPreviousMove();
-          break;
-        case 'ArrowRight':
-          event.preventDefault();
-          goToNextMove();
-          break;
-        case 'ArrowUp':
-          event.preventDefault();
-          goToFirstMove();
-          break;
-        case 'ArrowDown':
-          event.preventDefault();
-          goToLatestMove();
-          break;
-        default:
-          break;
-      }
-    };
-
-    window.addEventListener('keydown', onGlobalHistoryKeyDown);
-    return () => window.removeEventListener('keydown', onGlobalHistoryKeyDown);
-  }, [moveHistory.length, pendingPromotion]);
+  const {
+    goToFirstMove,
+    goToPreviousMove,
+    goToNextMove,
+    goToLatestMove
+  } = useHistoryControls({
+    moveHistoryLength: moveHistory.length,
+    pendingPromotion,
+    viewingHistory,
+    setViewedPly,
+    setSelectedSquare,
+    setDragSourceSquare,
+    setRightClickedSquares,
+    setDrawnArrows,
+    previousMoveHistoryLenRef
+  });
 
   const chessboardOptions = useChessboardOptions({
     displayedBoard,
