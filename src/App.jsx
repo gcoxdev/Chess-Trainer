@@ -1388,6 +1388,51 @@ export default function App() {
     setViewedPly(moveHistory.length);
   };
 
+  useEffect(() => {
+    const onGlobalHistoryKeyDown = (event) => {
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+
+      const target = event.target;
+      if (target instanceof HTMLElement) {
+        const tagName = target.tagName;
+        const isFormControl = tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT' || tagName === 'BUTTON';
+        if (isFormControl || target.isContentEditable) {
+          return;
+        }
+      }
+
+      if (!moveHistory.length || pendingPromotion) {
+        return;
+      }
+
+      switch (event.key) {
+        case 'ArrowLeft':
+          event.preventDefault();
+          goToPreviousMove();
+          break;
+        case 'ArrowRight':
+          event.preventDefault();
+          goToNextMove();
+          break;
+        case 'ArrowUp':
+          event.preventDefault();
+          goToFirstMove();
+          break;
+        case 'ArrowDown':
+          event.preventDefault();
+          goToLatestMove();
+          break;
+        default:
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', onGlobalHistoryKeyDown);
+    return () => window.removeEventListener('keydown', onGlobalHistoryKeyDown);
+  }, [moveHistory.length, pendingPromotion]);
+
   const chessboardOptions = useChessboardOptions({
     displayedBoard,
     boardOrientation,
@@ -1451,12 +1496,12 @@ export default function App() {
             ) : null}
           </div>
         </div>
-        <div className="turn-line">
+        <div className="turn-line" role="status" aria-live="polite" aria-atomic="true">
           <strong>Turn:</strong> {turnDisplay}
           {engineThinking ? <span className="spinner" aria-label="Engine thinking" /> : null}
         </div>
         {resultMessage ? (
-          <div className="result-line">
+          <div className="result-line" role="alert" aria-live="assertive" aria-atomic="true">
             <strong>Result:</strong> {resultMessage}
           </div>
         ) : null}

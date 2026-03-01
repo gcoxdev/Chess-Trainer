@@ -20,6 +20,33 @@ export function MoveListPanel({
   showBlackRankColumn,
   formatMoveMetaDisplay
 }) {
+  const handleMoveNavKeyDown = (event) => {
+    if (!moveHistory.length) {
+      return;
+    }
+
+    switch (event.key) {
+      case 'ArrowLeft':
+        event.preventDefault();
+        goToPreviousMove();
+        break;
+      case 'ArrowRight':
+        event.preventDefault();
+        goToNextMove();
+        break;
+      case 'ArrowUp':
+        event.preventDefault();
+        goToFirstMove();
+        break;
+      case 'ArrowDown':
+        event.preventDefault();
+        goToLatestMove();
+        break;
+      default:
+        break;
+    }
+  };
+
   return (
     <CollapsiblePanel
       title="Move List"
@@ -27,7 +54,13 @@ export function MoveListPanel({
       onToggle={onToggle}
     >
       <>
-        <div className="move-nav">
+        <div
+          className="move-nav"
+          tabIndex={0}
+          role="group"
+          aria-label="Move history navigation. Use Left and Right arrows to step, Up for first, Down for latest."
+          onKeyDown={handleMoveNavKeyDown}
+        >
           <button
             type="button"
             className="secondary"
@@ -61,7 +94,8 @@ export function MoveListPanel({
             Latest
           </button>
         </div>
-        <p className="move-review-note">
+        <p className="sr-only">Keyboard shortcuts: Left and Right arrows step through moves. Up jumps to first, Down jumps to latest.</p>
+        <p className="move-review-note" role="status" aria-live="polite" aria-atomic="true">
           {moveHistory.length
             ? `Viewing ply ${clampedViewedPly}/${moveHistory.length}${viewingHistory ? ' (review mode: moves locked)' : ''}`
             : 'No moves yet.'}

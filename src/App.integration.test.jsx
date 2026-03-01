@@ -68,7 +68,7 @@ describe('App integration flows', () => {
     });
   });
 
-  test('history review mode locks moves until latest', async () => {
+  test('history review mode locks moves until latest and supports global keyboard navigation', async () => {
     render(<App />);
 
     fireEvent.change(screen.getByLabelText(/Game Mode/i), {
@@ -88,7 +88,7 @@ describe('App integration flows', () => {
       expect(screen.getByText(/Viewing ply 1\/1/)).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: /Back/i }));
+    fireEvent.keyDown(window, { key: 'ArrowLeft' });
 
     await waitFor(() => {
       expect(screen.getByText(/Viewing ply 0\/1/)).toBeInTheDocument();

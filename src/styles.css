@@ -190,6 +190,18 @@ select:disabled {
   border-color: #b4c6de;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .board-wrap {
   grid-area: board;
   display: grid;
@@ -588,6 +600,12 @@ h2 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.4rem;
   margin-bottom: 0.45rem;
+}
+
+.move-nav:focus-visible {
+  outline: 2px solid #1a4f8b;
+  outline-offset: 3px;
+  border-radius: 8px;
 }
 
 .move-nav .secondary {

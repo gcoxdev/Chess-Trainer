@@ -1,5 +1,8 @@
+import { useId } from 'react';
+
 export function CollapsiblePanel({ title, collapsed, onToggle, children, as = 'section' }) {
   const RootTag = as;
+  const panelBodyId = useId();
 
   return (
     <RootTag className={`panel${collapsed ? ' is-collapsed' : ''}`}>
@@ -11,11 +14,14 @@ export function CollapsiblePanel({ title, collapsed, onToggle, children, as = 's
           onClick={onToggle}
           aria-expanded={!collapsed}
           aria-label={collapsed ? `Expand ${title}` : `Collapse ${title}`}
+          aria-controls={panelBodyId}
         >
           {collapsed ? 'Show' : 'Hide'}
         </button>
       </div>
-      {!collapsed ? children : null}
+      <div id={panelBodyId} hidden={collapsed}>
+        {!collapsed ? children : null}
+      </div>
     </RootTag>
   );
 }

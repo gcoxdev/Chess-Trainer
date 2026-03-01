@@ -48,7 +48,7 @@ export function ScorePanel({
       onToggle={onToggle}
     >
       <>
-        <p><strong>Update:</strong> {status}</p>
+        <p role="status" aria-live="polite" aria-atomic="true"><strong>Update:</strong> {status}</p>
         {!freeplayMode ? <p><strong>Current:</strong> {formatScoreValue(score.earned)} / {formatScoreValue(score.possible)} ({scorePercent}%)</p> : null}
         {!freeplayMode ? <p><strong>Mistakes:</strong> {score.errors}</p> : null}
         {!freeplayMode && useTimeScoring ? <p><strong>Total Time:</strong> {formatDurationMs(displayedTotalTimedMs)}</p> : null}
