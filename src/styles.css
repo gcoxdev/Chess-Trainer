@@ -59,7 +59,7 @@
   --secondary-text: #d8e6f8;
   --secondary-border: #49688f;
   --capture-bg: rgba(18, 29, 46, 0.94);
-  --capture-group-bg: rgba(18, 33, 54, 0.7);
+  --capture-group-bg: rgba(42, 63, 93, 0.72);
   --capture-group-border: rgba(78, 106, 146, 0.55);
   --status-bg: #15243b;
   --status-border: #345073;
@@ -464,6 +464,21 @@ select:disabled {
 }
 
 .capture-piece-glyph-black-text {
+  color: #0f1829;
+}
+
+:root[data-theme='dark'] .capture-piece-glyph-white-text,
+:root[data-theme='dark'] .capture-piece-glyph-black-text {
+  background: rgba(240, 247, 255, 0.96);
+  border: 1px solid rgba(162, 182, 212, 0.92);
+  border-radius: 5px;
+}
+
+:root[data-theme='dark'] .capture-piece-glyph-white-text {
+  color: #2a3f5b;
+}
+
+:root[data-theme='dark'] .capture-piece-glyph-black-text {
   color: #0f1829;
 }
 
