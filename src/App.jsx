@@ -65,7 +65,7 @@ export default function App() {
       // ignore storage errors and fall back to media query
     }
 
-    return Boolean(window.matchMedia?.('(prefers-color-scheme: dark)').matches);
+    return true;
   });
   const [game, setGame] = useState(() => new Chess());
   const [engineSkillLevel, setEngineSkillLevel] = useState(5);
@@ -83,7 +83,7 @@ export default function App() {
   const [useTimeScoring, setUseTimeScoring] = useState(false);
   const [allowCommonOpenings, setAllowCommonOpenings] = useState(false);
   const [playerColor, setPlayerColor] = useState('w');
-  const [boardStyle, setBoardStyle] = useState('classic');
+  const [boardStyle, setBoardStyle] = useState('slate');
   const [pieceStyle, setPieceStyle] = useState('default');
   const [manualBoardOrientation, setManualBoardOrientation] = useState('white');
   const [autoFlipBoard, setAutoFlipBoard] = useState(false);
@@ -123,6 +123,19 @@ export default function App() {
   const [currentSessionSaved, setCurrentSessionSaved] = useState(false);
   const [showScoreHistory, setShowScoreHistory] = useState(false);
   const [pendingPromotion, setPendingPromotion] = useState(null);
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [installPromptEvent, setInstallPromptEvent] = useState(null);
+  const [isPwaInstalled, setIsPwaInstalled] = useState(false);
+  const [installNoticeDismissed, setInstallNoticeDismissed] = useState(() => {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+    try {
+      return window.localStorage.getItem('chess-trainer-install-notice-dismissed') === '1';
+    } catch {
+      return false;
+    }
+  });
   const [collapsedPanels, setCollapsedPanels] = useState({
     settings: false,
     score: false,
@@ -175,6 +188,77 @@ export default function App() {
       document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
     }
   }, [darkMode]);
+
+  useEffect(() => {
+    const onUpdateAvailable = () => setUpdateAvailable(true);
+    window.addEventListener('sw-update-available', onUpdateAvailable);
+    return () => window.removeEventListener('sw-update-available', onUpdateAvailable);
+  }, []);
+
+  useEffect(() => {
+    const standaloneDisplay = window.matchMedia?.('(display-mode: standalone)').matches;
+    const iosStandalone = Boolean(window.navigator.standalone);
+    if (standaloneDisplay || iosStandalone) {
+      setIsPwaInstalled(true);
+      return undefined;
+    }
+
+    const onBeforeInstallPrompt = (event) => {
+      event.preventDefault();
+      setInstallPromptEvent(event);
+    };
+
+    const onAppInstalled = () => {
+      setIsPwaInstalled(true);
+      setInstallPromptEvent(null);
+    };
+
+    window.addEventListener('beforeinstallprompt', onBeforeInstallPrompt);
+    window.addEventListener('appinstalled', onAppInstalled);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', onBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', onAppInstalled);
+    };
+  }, []);
+
+  const applyAppUpdate = useCallback(() => {
+    const registration = window.__chessTrainerSWRegistration;
+    if (!registration?.waiting) {
+      window.location.reload();
+      return;
+    }
+
+    const onControllerChange = () => {
+      window.removeEventListener('controllerchange', onControllerChange);
+      window.location.reload();
+    };
+
+    window.addEventListener('controllerchange', onControllerChange);
+    registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+  }, []);
+
+  const installPwa = useCallback(async () => {
+    if (!installPromptEvent) {
+      return;
+    }
+
+    installPromptEvent.prompt();
+    try {
+      await installPromptEvent.userChoice;
+    } finally {
+      setInstallPromptEvent(null);
+    }
+  }, [installPromptEvent]);
+
+  const dismissInstallNotice = useCallback(() => {
+    setInstallNoticeDismissed(true);
+    try {
+      window.localStorage.setItem('chess-trainer-install-notice-dismissed', '1');
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
 
   const clampedViewedPly = useMemo(() => clamp(viewedPly, 0, moveHistory.length), [viewedPly, moveHistory.length]);
   const viewingHistory = isGameStarted && clampedViewedPly < moveHistory.length;
@@ -1767,7 +1851,42 @@ export default function App() {
 
   return (
     <div className={`app ${darkMode ? 'theme-dark' : 'theme-light'}`}>
-      <div className="board-status" ref={boardStatusRef}>
+      <div className="status-stack">
+        {!isPwaInstalled && installPromptEvent && !installNoticeDismissed ? (
+          <div className="app-notice" role="status" aria-live="polite" aria-atomic="true">
+            <span><strong>Install:</strong> Install this app for offline use.</span>
+            <div className="app-notice-actions">
+              <button
+                type="button"
+                className="secondary"
+                onClick={installPwa}
+              >
+                Install App
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                onClick={dismissInstallNotice}
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {updateAvailable ? (
+          <div className="app-notice" role="status" aria-live="polite" aria-atomic="true">
+            <strong>Update:</strong> A new version is available.
+            <button
+              type="button"
+              className="secondary"
+              style={{ marginLeft: '8px' }}
+              onClick={applyAppUpdate}
+            >
+              Reload
+            </button>
+          </div>
+        ) : null}
+        <div className="board-status" ref={boardStatusRef}>
         <div className="board-head">
           <div className="board-title">Chess Trainer</div>
           <div className="board-actions">
@@ -1811,6 +1930,7 @@ export default function App() {
             <strong>Result:</strong> {resultMessage}
           </div>
         ) : null}
+        </div>
       </div>
 
       <main className="board-wrap" ref={boardWrapRef}>

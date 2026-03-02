@@ -16,6 +16,7 @@ Chess Trainer is a React + Vite application for practicing chess in multiple tra
 - Board/piece theme customization and dark mode
 - Right-click square marking and arrow drawing
 - Stockfish 18 worker setup via script
+- PWA manifest + service worker for offline-capable usage after initial load
 
 ## Tech Stack
 

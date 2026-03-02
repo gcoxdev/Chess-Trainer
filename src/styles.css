@@ -518,8 +518,39 @@ select:disabled {
   align-self: stretch;
 }
 
-.board-status {
+.status-stack {
   grid-area: status;
+  width: 100%;
+  display: grid;
+  gap: 0.25rem;
+  justify-self: center;
+}
+
+.app-notice {
+  width: 100%;
+  background: var(--status-bg);
+  border: 1px solid var(--status-border);
+  border-radius: 12px;
+  padding: 0.45rem 0.8rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.app-notice-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.app-notice-actions button {
+  width: auto;
+  min-width: 110px;
+  white-space: nowrap;
+}
+
+.board-status {
   width: 100%;
   background: var(--status-bg);
   border: 1px solid var(--status-border);
@@ -838,6 +869,11 @@ h2 {
   }
 
   .board-status {
+    width: 100%;
+    justify-self: stretch;
+  }
+
+  .status-stack {
     width: 100%;
     justify-self: stretch;
   }

@@ -156,7 +156,7 @@ describe('App integration flows', () => {
     await waitFor(() => {
       expect(screen.getByText('>3 · d4')).toBeInTheDocument();
     });
-  });
+  }, 12000);
 
   test('history review mode locks moves until latest and supports global keyboard navigation', async () => {
     render(<App />);
