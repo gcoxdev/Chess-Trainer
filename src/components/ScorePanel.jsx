@@ -46,6 +46,8 @@ export function ScorePanel({
   onTogglePuzzleHint,
   error
 }) {
+  const shouldShowTimedDuration = (entry) => entry?.scoreMode === 'timed';
+
   return (
     <CollapsiblePanel
       title="Score"
@@ -74,7 +76,9 @@ export function ScorePanel({
               {formatScoreValue(Math.max(0, bestClassicScore.earned))} / {formatScoreValue(bestClassicScore.possible)} ({bestClassicScore.percent.toFixed(1)}%)
               {bestClassicScore.topN ? ` [Top ${bestClassicScore.topN}]` : ''}
               {bestClassicScore.scoreMode ? ` [${bestClassicScore.scoreMode === 'timed' ? 'Timed' : 'Standard'}]` : ''}
-              {typeof bestClassicScore.totalMoveTimeMs === 'number' ? ` [Time ${formatDurationMs(bestClassicScore.totalMoveTimeMs)}]` : ''}
+              {shouldShowTimedDuration(bestClassicScore) && typeof bestClassicScore.totalMoveTimeMs === 'number'
+                ? ` [Time ${formatDurationMs(bestClassicScore.totalMoveTimeMs)}]`
+                : ''}
             </p>
           ) : (
             <p><strong>Best Classic:</strong> -</p>
@@ -87,7 +91,9 @@ export function ScorePanel({
               {bestRandomSession.topN ? `, Top ${bestRandomSession.topN}` : ''}
               {` [${randomFenPhase === 'random' ? 'Random' : randomFenPhase}]`}
               {bestRandomSession.scoreMode ? ` [${bestRandomSession.scoreMode === 'timed' ? 'Timed' : 'Standard'}]` : ''}
-              {typeof bestRandomSession.totalMoveTimeMs === 'number' ? ` [Time ${formatDurationMs(bestRandomSession.totalMoveTimeMs)}]` : ''}
+              {shouldShowTimedDuration(bestRandomSession) && typeof bestRandomSession.totalMoveTimeMs === 'number'
+                ? ` [Time ${formatDurationMs(bestRandomSession.totalMoveTimeMs)}]`
+                : ''}
             </p>
           ) : (
             <p><strong>Best Random:</strong> -</p>
@@ -99,7 +105,9 @@ export function ScorePanel({
               {bestPuzzleSession.puzzles} puzzles, {formatScoreValue(Math.max(0, bestPuzzleSession.earned))} / {formatScoreValue(bestPuzzleSession.possible)} ({bestPuzzleSession.percent.toFixed(1)}%)
               {` [${formatPuzzleThemeLabel(puzzleTheme)}]`}
               {bestPuzzleSession.scoreMode ? ` [${bestPuzzleSession.scoreMode === 'timed' ? 'Timed' : 'Standard'}]` : ''}
-              {typeof bestPuzzleSession.totalMoveTimeMs === 'number' ? ` [Time ${formatDurationMs(bestPuzzleSession.totalMoveTimeMs)}]` : ''}
+              {shouldShowTimedDuration(bestPuzzleSession) && typeof bestPuzzleSession.totalMoveTimeMs === 'number'
+                ? ` [Time ${formatDurationMs(bestPuzzleSession.totalMoveTimeMs)}]`
+                : ''}
             </p>
           ) : (
             <p><strong>Best Puzzle:</strong> -</p>
@@ -139,10 +147,10 @@ export function ScorePanel({
                   <span className="history-rank">#{index + 1}</span>
                   <span className="history-main">
                     {puzzleMode
-                      ? `${entry.puzzles} puz, ${formatScoreValue(Math.max(0, entry.earned))}/${formatScoreValue(entry.possible)} (${entry.percent.toFixed(1)}%)${typeof entry.totalMoveTimeMs === 'number' ? `, Time ${formatDurationMs(entry.totalMoveTimeMs)}` : ''}`
+                      ? `${entry.puzzles} puz, ${formatScoreValue(Math.max(0, entry.earned))}/${formatScoreValue(entry.possible)} (${entry.percent.toFixed(1)}%)${shouldShowTimedDuration(entry) && typeof entry.totalMoveTimeMs === 'number' ? `, Time ${formatDurationMs(entry.totalMoveTimeMs)}` : ''}`
                       : randomFenMode
-                        ? `${entry.positions} pos, ${formatScoreValue(Math.max(0, entry.earned))}/${formatScoreValue(entry.possible)} (${entry.percent.toFixed(1)}%)${entry.topN ? `, Top ${entry.topN}` : ''}${typeof entry.totalMoveTimeMs === 'number' ? `, Time ${formatDurationMs(entry.totalMoveTimeMs)}` : ''}`
-                        : `${formatScoreValue(Math.max(0, entry.earned))}/${formatScoreValue(entry.possible)} (${entry.percent.toFixed(1)}%)${entry.topN ? `, Top ${entry.topN}` : ''}${typeof entry.totalMoveTimeMs === 'number' ? `, Time ${formatDurationMs(entry.totalMoveTimeMs)}` : ''}`}
+                        ? `${entry.positions} pos, ${formatScoreValue(Math.max(0, entry.earned))}/${formatScoreValue(entry.possible)} (${entry.percent.toFixed(1)}%)${entry.topN ? `, Top ${entry.topN}` : ''}${shouldShowTimedDuration(entry) && typeof entry.totalMoveTimeMs === 'number' ? `, Time ${formatDurationMs(entry.totalMoveTimeMs)}` : ''}`
+                        : `${formatScoreValue(Math.max(0, entry.earned))}/${formatScoreValue(entry.possible)} (${entry.percent.toFixed(1)}%)${entry.topN ? `, Top ${entry.topN}` : ''}${shouldShowTimedDuration(entry) && typeof entry.totalMoveTimeMs === 'number' ? `, Time ${formatDurationMs(entry.totalMoveTimeMs)}` : ''}`}
                   </span>
                   <span className="history-time">{formatHistoryTimestamp(entry.timestamp)}</span>
                 </div>
