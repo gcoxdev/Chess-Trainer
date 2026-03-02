@@ -1,4 +1,11 @@
 import { CollapsiblePanel } from './CollapsiblePanel';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import {
+  faAnglesLeft,
+  faAnglesRight,
+  faChevronLeft,
+  faChevronRight
+} from '@fortawesome/free-solid-svg-icons';
 
 export function MoveListPanel({
   collapsed,
@@ -47,53 +54,65 @@ export function MoveListPanel({
     }
   };
 
+  const moveHeaderActions = (
+    <div
+      className="move-nav move-nav-header"
+      tabIndex={0}
+      role="group"
+      aria-label="Move history navigation. Use Left and Right arrows to step, Up for first, Down for latest."
+      onKeyDown={handleMoveNavKeyDown}
+    >
+      <button
+        type="button"
+        className="secondary"
+        onClick={goToFirstMove}
+        disabled={!moveHistory.length || clampedViewedPly === 0}
+        aria-label="Go to first move"
+        title="First"
+      >
+        <FontAwesomeIcon icon={faAnglesLeft} />
+      </button>
+      <button
+        type="button"
+        className="secondary"
+        onClick={goToPreviousMove}
+        disabled={!moveHistory.length || clampedViewedPly === 0}
+        aria-label="Go to previous move"
+        title="Back"
+      >
+        <FontAwesomeIcon icon={faChevronLeft} />
+      </button>
+      <button
+        type="button"
+        className="secondary"
+        onClick={goToNextMove}
+        disabled={!moveHistory.length || clampedViewedPly >= moveHistory.length}
+        aria-label="Go to next move"
+        title="Forward"
+      >
+        <FontAwesomeIcon icon={faChevronRight} />
+      </button>
+      <button
+        type="button"
+        className="secondary"
+        onClick={goToLatestMove}
+        disabled={!moveHistory.length || clampedViewedPly >= moveHistory.length}
+        aria-label="Go to latest move"
+        title="Latest"
+      >
+        <FontAwesomeIcon icon={faAnglesRight} />
+      </button>
+    </div>
+  );
+
   return (
     <CollapsiblePanel
       title="Move List"
       collapsed={collapsed}
       onToggle={onToggle}
+      headerActions={moveHeaderActions}
     >
       <>
-        <div
-          className="move-nav"
-          tabIndex={0}
-          role="group"
-          aria-label="Move history navigation. Use Left and Right arrows to step, Up for first, Down for latest."
-          onKeyDown={handleMoveNavKeyDown}
-        >
-          <button
-            type="button"
-            className="secondary"
-            onClick={goToFirstMove}
-            disabled={!moveHistory.length || clampedViewedPly === 0}
-          >
-            First
-          </button>
-          <button
-            type="button"
-            className="secondary"
-            onClick={goToPreviousMove}
-            disabled={!moveHistory.length || clampedViewedPly === 0}
-          >
-            Back
-          </button>
-          <button
-            type="button"
-            className="secondary"
-            onClick={goToNextMove}
-            disabled={!moveHistory.length || clampedViewedPly >= moveHistory.length}
-          >
-            Forward
-          </button>
-          <button
-            type="button"
-            className="secondary"
-            onClick={goToLatestMove}
-            disabled={!moveHistory.length || clampedViewedPly >= moveHistory.length}
-          >
-            Latest
-          </button>
-        </div>
         <p className="sr-only">Keyboard shortcuts: Left and Right arrows step through moves. Up jumps to first, Down jumps to latest.</p>
         <p className="move-review-note" role="status" aria-live="polite" aria-atomic="true">
           {moveHistory.length

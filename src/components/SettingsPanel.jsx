@@ -33,16 +33,6 @@ export function SettingsPanel({
   setFreeplayAnalyzeMoves,
   playerColor,
   setPlayerColor,
-  boardStyle,
-  setBoardStyle,
-  BOARD_THEMES,
-  pieceStyle,
-  setPieceStyle,
-  UNICODE_PIECE_STYLES,
-  showValidMoves,
-  setShowValidMoves,
-  darkMode,
-  setDarkMode,
   useTimeScoring,
   setUseTimeScoring,
   isGameStarted,
@@ -191,50 +181,6 @@ export function SettingsPanel({
             </select>
           </label>
         ) : null}
-
-        <label>
-          Board Style
-          <select value={boardStyle} onChange={(e) => setBoardStyle(e.target.value)}>
-            {Object.entries(BOARD_THEMES).map(([value, theme]) => (
-              <option value={value} key={value}>{theme.label}</option>
-            ))}
-          </select>
-        </label>
-
-        <label>
-          Piece Style
-          <select value={pieceStyle} onChange={(e) => setPieceStyle(e.target.value)}>
-            <option value="default">Default</option>
-            <option value="sprite26774">Line Art</option>
-            <option value="spriteChessPieces">Illustrated</option>
-            <option value="sprite3413429">Regal</option>
-            <option value="spriteChrisdesign">Modern</option>
-            <option value="spriteRetro">Retro</option>
-            {Object.entries(UNICODE_PIECE_STYLES).map(([value, config]) => (
-              <option value={value} key={value}>{config.label}</option>
-            ))}
-            <option value="alpha">Alpha</option>
-            <option value="glass">Glass</option>
-          </select>
-        </label>
-
-        <label>
-          Show Valid Moves
-          <input
-            type="checkbox"
-            checked={showValidMoves}
-            onChange={(e) => setShowValidMoves(e.target.checked)}
-          />
-        </label>
-
-        <label>
-          Dark Mode
-          <input
-            type="checkbox"
-            checked={darkMode}
-            onChange={(e) => setDarkMode(e.target.checked)}
-          />
-        </label>
 
         {!freeplayMode && !repertoireMode ? (
           <label>

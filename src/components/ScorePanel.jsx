@@ -1,4 +1,6 @@
 import { CollapsiblePanel } from './CollapsiblePanel';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faTrashCan } from '@fortawesome/free-solid-svg-icons';
 import { formatDurationMs, formatHistoryTimestamp, formatPuzzleThemeLabel, formatScoreValue } from '../lib/chessCore';
 
 export function ScorePanel({
@@ -124,7 +126,7 @@ export function ScorePanel({
                   title={clearHistoryButtonTitle}
                   aria-label={clearHistoryAriaLabel}
                 >
-                  🗑
+                  <FontAwesomeIcon icon={faTrashCan} />
                 </button>
               </div>
               <div className="history-row history-columns" aria-hidden="true">

@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Chess } from 'chess.js';
 import { Chessboard, defaultPieces } from 'react-chessboard';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import {
+  faGear,
+  faLock,
+  faLockOpen,
+  faRotate,
+  faXmark
+} from '@fortawesome/free-solid-svg-icons';
 import { MoveListPanel } from './components/MoveListPanel';
 import { ScorePanel } from './components/ScorePanel';
 import { SettingsPanel } from './components/SettingsPanel';
@@ -83,8 +91,32 @@ export default function App() {
   const [useTimeScoring, setUseTimeScoring] = useState(false);
   const [allowCommonOpenings, setAllowCommonOpenings] = useState(false);
   const [playerColor, setPlayerColor] = useState('w');
-  const [boardStyle, setBoardStyle] = useState('slate');
-  const [pieceStyle, setPieceStyle] = useState('default');
+  const [boardStyle, setBoardStyle] = useState(() => {
+    if (typeof window === 'undefined') {
+      return 'slate';
+    }
+    try {
+      const saved = window.localStorage.getItem('chess-trainer-board-style');
+      return saved && BOARD_THEMES[saved] ? saved : 'slate';
+    } catch {
+      return 'slate';
+    }
+  });
+  const [pieceStyle, setPieceStyle] = useState(() => {
+    if (typeof window === 'undefined') {
+      return 'default';
+    }
+    try {
+      const saved = window.localStorage.getItem('chess-trainer-piece-style');
+      if (!saved) {
+        return 'default';
+      }
+      const validPieceStyles = new Set(['default', 'glyph', ...Object.keys(UNICODE_PIECE_STYLES)]);
+      return validPieceStyles.has(saved) ? saved : 'default';
+    } catch {
+      return 'default';
+    }
+  });
   const [manualBoardOrientation, setManualBoardOrientation] = useState('white');
   const [autoFlipBoard, setAutoFlipBoard] = useState(false);
   const [activePlayerColor, setActivePlayerColor] = useState('w');
@@ -104,7 +136,23 @@ export default function App() {
   const [errorSquareStyles, setErrorSquareStyles] = useState({});
   const [rightClickedSquares, setRightClickedSquares] = useState({});
   const [drawnArrows, setDrawnArrows] = useState([]);
-  const [showValidMoves, setShowValidMoves] = useState(true);
+  const [showValidMoves, setShowValidMoves] = useState(() => {
+    if (typeof window === 'undefined') {
+      return true;
+    }
+    try {
+      const saved = window.localStorage.getItem('chess-trainer-show-valid-moves');
+      if (saved === '1') {
+        return true;
+      }
+      if (saved === '0') {
+        return false;
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return true;
+  });
   const [playerTurnStartedAt, setPlayerTurnStartedAt] = useState(0);
   const [totalTimedMoveMs, setTotalTimedMoveMs] = useState(0);
   const [liveTimedTurnMs, setLiveTimedTurnMs] = useState(0);
@@ -124,6 +172,7 @@ export default function App() {
   const [showScoreHistory, setShowScoreHistory] = useState(false);
   const [pendingPromotion, setPendingPromotion] = useState(null);
   const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [showDisplaySettingsModal, setShowDisplaySettingsModal] = useState(false);
   const [installPromptEvent, setInstallPromptEvent] = useState(null);
   const [isPwaInstalled, setIsPwaInstalled] = useState(false);
   const [installNoticeDismissed, setInstallNoticeDismissed] = useState(() => {
@@ -188,6 +237,45 @@ export default function App() {
       document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
     }
   }, [darkMode]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('chess-trainer-board-style', boardStyle);
+    } catch {
+      // ignore storage errors
+    }
+  }, [boardStyle]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('chess-trainer-piece-style', pieceStyle);
+    } catch {
+      // ignore storage errors
+    }
+  }, [pieceStyle]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('chess-trainer-show-valid-moves', showValidMoves ? '1' : '0');
+    } catch {
+      // ignore storage errors
+    }
+  }, [showValidMoves]);
+
+  useEffect(() => {
+    if (!showDisplaySettingsModal) {
+      return undefined;
+    }
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setShowDisplaySettingsModal(false);
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [showDisplaySettingsModal]);
 
   useEffect(() => {
     const onUpdateAvailable = () => setUpdateAvailable(true);
@@ -1765,16 +1853,6 @@ export default function App() {
     setFreeplayAnalyzeMoves,
     playerColor,
     setPlayerColor,
-    boardStyle,
-    setBoardStyle,
-    BOARD_THEMES,
-    pieceStyle,
-    setPieceStyle,
-    UNICODE_PIECE_STYLES,
-    showValidMoves,
-    setShowValidMoves,
-    darkMode,
-    setDarkMode,
     useTimeScoring,
     setUseTimeScoring,
     isGameStarted,
@@ -1893,18 +1971,23 @@ export default function App() {
             {!autoFlipBoard ? (
               <button
                 type="button"
-                className="secondary board-flip-button"
+                className="secondary board-icon-button"
                 onClick={() => setManualBoardOrientation((prev) => (prev === 'white' ? 'black' : 'white'))}
+                aria-label="Flip board"
+                title="Flip Board"
               >
-                Flip Board
+                <FontAwesomeIcon icon={faRotate} />
               </button>
             ) : null}
             {freeplayMode ? (
               <label className="board-toggle">
-                <span>Flip Each Turn</span>
+                <span title="Flip each turn">
+                  <FontAwesomeIcon icon={autoFlipBoard ? faLock : faLockOpen} />
+                </span>
                 <input
                   type="checkbox"
                   checked={autoFlipBoard}
+                  aria-label="Flip each turn"
                   onChange={(e) => setAutoFlipBoard(e.target.checked)}
                 />
               </label>
@@ -1919,6 +2002,15 @@ export default function App() {
                 Resign
               </button>
             ) : null}
+            <button
+              type="button"
+              className="secondary board-icon-button"
+              onClick={() => setShowDisplaySettingsModal(true)}
+              aria-label="Open display settings"
+              title="Display Settings"
+            >
+              <FontAwesomeIcon icon={faGear} />
+            </button>
           </div>
         </div>
         <div className="turn-line" role="status" aria-live="polite" aria-atomic="true">
@@ -1932,6 +2024,73 @@ export default function App() {
         ) : null}
         </div>
       </div>
+      {showDisplaySettingsModal ? (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onClick={() => setShowDisplaySettingsModal(false)}
+        >
+          <div
+            className="settings-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Display settings"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="settings-modal-head">
+              <h2>Display Settings</h2>
+              <button
+                type="button"
+                className="secondary settings-modal-close"
+                onClick={() => setShowDisplaySettingsModal(false)}
+                aria-label="Close display settings"
+              >
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
+            </div>
+            <div className="settings-modal-controls">
+              <div className="settings-modal-selects">
+                <label>
+                  Board Style
+                  <select value={boardStyle} onChange={(e) => setBoardStyle(e.target.value)}>
+                    {Object.entries(BOARD_THEMES).map(([key, theme]) => (
+                      <option key={key} value={key}>{theme.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Piece Style
+                  <select value={pieceStyle} onChange={(e) => setPieceStyle(e.target.value)}>
+                    <option value="default">Default SVG</option>
+                    <option value="glyph">Unicode (System)</option>
+                    {Object.entries(UNICODE_PIECE_STYLES).map(([key, cfg]) => (
+                      <option key={key} value={key}>{cfg.label}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="settings-modal-toggles">
+                <label className="settings-checkbox-label">
+                  <span>Show Valid Moves</span>
+                  <input
+                    type="checkbox"
+                    checked={showValidMoves}
+                    onChange={(e) => setShowValidMoves(e.target.checked)}
+                  />
+                </label>
+                <label className="settings-checkbox-label">
+                  <span>Dark Mode</span>
+                  <input
+                    type="checkbox"
+                    checked={darkMode}
+                    onChange={(e) => setDarkMode(e.target.checked)}
+                  />
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <main className="board-wrap" ref={boardWrapRef}>
         <div className="board-area" onContextMenu={(e) => e.preventDefault()}>
