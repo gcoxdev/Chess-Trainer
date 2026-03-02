@@ -1639,7 +1639,7 @@ export default function App() {
       return;
     }
 
-    finishGame(game, score, { resultOverride: result });
+    finishGame(game, score, { resultOverride: result, statusOverride: result, skipScoreSave: true });
   };
 
   const clearActiveScoreHistory = () => {

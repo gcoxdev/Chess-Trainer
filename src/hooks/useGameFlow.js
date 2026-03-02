@@ -193,7 +193,11 @@ export function useGameFlow({
   ]);
 
   const finishGame = useCallback((board, scoreSnapshot = score, options = {}) => {
-    const { resultOverride = '', statusOverride = '' } = options;
+    const {
+      resultOverride = '',
+      statusOverride = '',
+      skipScoreSave = false
+    } = options;
     setResultOverrideMessage(resultOverride || '');
 
     if (freeplayMode || puzzleMode) {
@@ -218,7 +222,7 @@ export function useGameFlow({
     setDragSourceSquare('');
     setAwaitingNextRandomFen(false);
 
-    if (!randomFenMode && !currentSessionSaved && scoreSnapshot.possible > 0) {
+    if (!skipScoreSave && !randomFenMode && !currentSessionSaved && scoreSnapshot.possible > 0) {
       setScoreHistory((prev) => ({
         ...prev,
         classicBySkill: {
