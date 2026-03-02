@@ -6,7 +6,7 @@ import {
   faGear,
   faLock,
   faLockOpen,
-  faRotate,
+  faRetweet,
   faXmark
 } from '@fortawesome/free-solid-svg-icons';
 import { MoveListPanel } from './components/MoveListPanel';
@@ -1980,6 +1980,16 @@ export default function App() {
         <div className="board-head">
           <div className="board-title">Chess Trainer</div>
           <div className="board-actions">
+            {isGameStarted && !randomFenMode && !puzzleMode && !repertoireMode ? (
+              <button
+                type="button"
+                className="secondary board-flip-button"
+                onClick={resignGame}
+                disabled={isProcessing || effectiveGameOver}
+              >
+                Resign
+              </button>
+            ) : null}
             {!autoFlipBoard ? (
               <button
                 type="button"
@@ -1988,7 +1998,7 @@ export default function App() {
                 aria-label="Flip board"
                 title="Flip Board"
               >
-                <FontAwesomeIcon icon={faRotate} />
+                <FontAwesomeIcon icon={faRetweet} />
               </button>
             ) : null}
             {freeplayMode ? (
@@ -2003,16 +2013,6 @@ export default function App() {
                   onChange={(e) => setAutoFlipBoard(e.target.checked)}
                 />
               </label>
-            ) : null}
-            {isGameStarted && !randomFenMode && !puzzleMode && !repertoireMode ? (
-              <button
-                type="button"
-                className="secondary board-flip-button"
-                onClick={resignGame}
-                disabled={isProcessing || effectiveGameOver}
-              >
-                Resign
-              </button>
             ) : null}
             <button
               type="button"
