@@ -55,6 +55,18 @@ import {
 } from './lib/chessCore';
 import { BOARD_THEMES, PIECE_SYMBOLS, UNICODE_PIECE_STYLES, createCustomPieces } from './lib/pieceThemes';
 
+const NON_UNICODE_PIECE_STYLES = [
+  'awesome',
+  'glyph',
+  'glass',
+  'alpha',
+  'sprite26774',
+  'spriteChessPieces',
+  'sprite3413429',
+  'spriteChrisdesign',
+  'spriteRetro'
+];
+
 export default function App() {
   const [darkMode, setDarkMode] = useState(() => {
     if (typeof window === 'undefined') {
@@ -111,7 +123,7 @@ export default function App() {
       if (!saved) {
         return 'default';
       }
-      const validPieceStyles = new Set(['default', 'glyph', ...Object.keys(UNICODE_PIECE_STYLES)]);
+      const validPieceStyles = new Set(['default', ...NON_UNICODE_PIECE_STYLES, ...Object.keys(UNICODE_PIECE_STYLES)]);
       return validPieceStyles.has(saved) ? saved : 'default';
     } catch {
       return 'default';
@@ -2061,11 +2073,18 @@ export default function App() {
                 <label>
                   Piece Style
                   <select value={pieceStyle} onChange={(e) => setPieceStyle(e.target.value)}>
-                    <option value="default">Default SVG</option>
-                    <option value="glyph">Unicode (System)</option>
-                    {Object.entries(UNICODE_PIECE_STYLES).map(([key, cfg]) => (
-                      <option key={key} value={key}>{cfg.label}</option>
-                    ))}
+                    <option value="default">Classic</option>
+                    <option value="sprite26774">Line Art</option>
+                    <option value="awesome">Awesome</option>
+                    <option value="spriteChessPieces">Illustrated</option>
+                    <option value="sprite3413429">Regal</option>
+                    <option value="spriteChrisdesign">Modern</option>
+                    <option value="spriteRetro">Retro</option>
+                    <option value="unicode1">{UNICODE_PIECE_STYLES.unicode1.label}</option>
+                    <option value="unicode6">{UNICODE_PIECE_STYLES.unicode6.label}</option>
+                    <option value="unicode7">{UNICODE_PIECE_STYLES.unicode7.label}</option>
+                    <option value="glass">Glass</option>
+                    <option value="alpha">Alpha</option>
                   </select>
                 </label>
               </div>

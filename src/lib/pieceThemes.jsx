@@ -1,3 +1,12 @@
+import {
+  faChessBishop,
+  faChessKing,
+  faChessKnight,
+  faChessPawn,
+  faChessQueen,
+  faChessRook
+} from '@fortawesome/free-solid-svg-icons';
+
 export const PIECE_SYMBOLS = {
   wK: '♔',
   wQ: '♕',
@@ -360,6 +369,76 @@ export function createCustomPieces(pieceStyle) {
       bR: getSpritePiece('bR'),
       bQ: getSpritePiece('bQ'),
       bK: getSpritePiece('bK')
+    };
+  }
+
+  if (pieceStyle === 'awesome') {
+    const iconByPiece = {
+      P: faChessPawn.icon,
+      N: faChessKnight.icon,
+      B: faChessBishop.icon,
+      R: faChessRook.icon,
+      Q: faChessQueen.icon,
+      K: faChessKing.icon
+    };
+
+    const getAwesomePiece = (pieceCode) => (props) => {
+      const icon = iconByPiece[pieceCode[1]];
+      if (!icon) {
+        return null;
+      }
+
+      const [iconWidth, iconHeight, , , pathData] = icon;
+      const maxDim = Math.max(iconWidth, iconHeight);
+      const size = 76;
+      const scale = size / maxDim;
+      const tx = (100 - (iconWidth * scale)) / 2;
+      const ty = (100 - (iconHeight * scale)) / 2;
+      const paths = Array.isArray(pathData) ? pathData : [pathData];
+      return (
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 100 100"
+          width="100%"
+          height="100%"
+          style={props?.svgStyle}
+        >
+          <g transform={`translate(${tx} ${ty}) scale(${scale})`}>
+            {paths.map((pathSegment, index) => (
+              <g key={`${pieceCode}-${index}`}>
+                <path
+                  d={pathSegment}
+                  fill="none"
+                  stroke={pieceCode[0] === 'w' ? '#2a405e' : '#a4bcdb'}
+                  strokeWidth={pieceCode[0] === 'w' ? 7 : 5}
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                  vectorEffect="non-scaling-stroke"
+                />
+                <path
+                  d={pathSegment}
+                  fill={pieceCode[0] === 'w' ? '#e6eefc' : '#142033'}
+                />
+              </g>
+            ))}
+          </g>
+        </svg>
+      );
+    };
+
+    return {
+      wP: getAwesomePiece('wP'),
+      wN: getAwesomePiece('wN'),
+      wB: getAwesomePiece('wB'),
+      wR: getAwesomePiece('wR'),
+      wQ: getAwesomePiece('wQ'),
+      wK: getAwesomePiece('wK'),
+      bP: getAwesomePiece('bP'),
+      bN: getAwesomePiece('bN'),
+      bB: getAwesomePiece('bB'),
+      bR: getAwesomePiece('bR'),
+      bQ: getAwesomePiece('bQ'),
+      bK: getAwesomePiece('bK')
     };
   }
 
