@@ -11,5 +11,4 @@ __pycache__/
 *.pyc
 
 # Generated local engine runtime files (copied from node_modules/stockfish)
-public/stockfish*.js
-public/stockfish*.wasm
+public/stockfish*
