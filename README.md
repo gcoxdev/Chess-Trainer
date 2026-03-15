@@ -1,6 +1,6 @@
 # Chess Trainer
 
-This project was created by OpenAI Codex 5.3.
+This project was created using OpenAI Codex 5.3 with some friendly human guidance.
 
 Chess Trainer is a React + Vite application for practicing chess in multiple training modes with Stockfish-powered analysis and guided opening line study.
 
